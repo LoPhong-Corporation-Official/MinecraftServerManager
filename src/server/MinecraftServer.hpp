@@ -54,6 +54,7 @@ private:
     void SetState(core::ServerState newState);
     void OnConsoleLine(const std::wstring& line);
     void OnStatsSample(const monitor::ProcessMonitor::Sample& sample); // Phase 2
+    [[nodiscard]] bool SupportsTpsQuery() const; // Phase 2: Paper/Spigot/Purpur/... only
     void WatchForExit();       // runs on watcherThread_
     void HandleUnexpectedExit();
     [[nodiscard]] bool ShouldAutoRestart();
@@ -71,6 +72,7 @@ private:
 
     std::atomic<core::ServerState> state_{core::ServerState::Stopped};
     std::atomic<bool> stopRequested_{false};
+    std::atomic<int> statsTickCounter_{0}; // Phase 2: throttles auto "/tps" queries
 
     std::jthread watcherThread_;
 

@@ -13,6 +13,7 @@
 
 class QLineEdit;
 class QLabel;
+class QComboBox;
 
 namespace ui
 {
@@ -28,12 +29,16 @@ public:
 
 private slots:
     void OnSaveClicked();
+    void OnBrowseDirectory();
+    void OnBrowseJar();
+    void OnBrowseJavaPath();
 
 private:
     QLineEdit* editName_ = nullptr;
     QLineEdit* editDirectory_ = nullptr;
     QLineEdit* editJar_ = nullptr;
     QLineEdit* editJavaPath_ = nullptr;
+    QComboBox* comboServerType_ = nullptr;
     QLineEdit* editMinMemory_ = nullptr;
     QLineEdit* editMaxMemory_ = nullptr;
     QLineEdit* editPort_ = nullptr;

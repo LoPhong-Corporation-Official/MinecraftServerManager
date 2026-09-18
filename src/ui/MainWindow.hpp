@@ -27,6 +27,8 @@ class QPlainTextEdit;
 class QLineEdit;
 class QPushButton;
 class QLabel;
+class QStackedWidget;
+class QToolBar;
 
 namespace ui
 {
@@ -54,18 +56,29 @@ private slots:
     void OnRestartClicked();
     void OnSendCommandClicked();
     void OnServerSelectionChanged();
+    void OnOpenLibraryClicked(); // Modrinth mods/plugins/modpacks browser
 
 private:
+    void BuildToolbar();
     void HandleAppEvent(core::AppEvent event); // always runs on the UI thread
     void RefreshServerList();
     void RefreshSelectedServerConsole();
     void RefreshControlsForState();
+    void UpdateStatsLabel(); // rebuilds labelStats_ from the two cached parts below
     void AppendConsoleLine(const QString& line);
     [[nodiscard]] std::wstring GetSelectedServerId() const;
 
     std::shared_ptr<server::ServerManager> serverManager_;
     std::shared_ptr<config::ConfigManager> configManager_;
     std::shared_ptr<core::EventDispatcher> events_;
+
+    QToolBar* toolbar_ = nullptr;
+
+    // Startup/empty-state page (index 0) vs. the normal server view
+    // (index 1) - shown depending on whether any server profile exists
+    // yet, so a brand new install greets the user with a call-to-action
+    // instead of a blank console.
+    QStackedWidget* stackedPages_ = nullptr;
 
     QListWidget* listServers_ = nullptr;
     QPushButton* buttonAdd_ = nullptr;
@@ -78,6 +91,13 @@ private:
     QPushButton* buttonStart_ = nullptr;
     QPushButton* buttonStop_ = nullptr;
     QPushButton* buttonRestart_ = nullptr;
+
+    // Cached pieces of the stats line, so a cpu/ram sample and a
+    // separately-arriving TPS reply (see core::AppEvent's cpuPercent
+    // sentinel) don't clobber each other - each updates only its own
+    // piece, then UpdateStatsLabel() joins them for display.
+    QString cachedCpuRamText_;
+    QString cachedTpsText_;
 };
 
 } // namespace ui

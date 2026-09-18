@@ -26,8 +26,15 @@ struct AppEvent
     std::wstring serverId;
     std::wstring message;              // console line text, or a human-readable detail
     ServerState state = ServerState::Stopped; // meaningful when type == ServerStateChanged
-    double cpuPercent = 0.0;           // meaningful when type == StatsUpdated
-    std::uint64_t memoryBytes = 0;     // meaningful when type == StatsUpdated
+    // --- StatsUpdated fields ---
+    // A StatsUpdated event carries EITHER a fresh cpu/memory sample OR a
+    // freshly-parsed TPS reply, never necessarily both at once (they come
+    // from two independent sources ticking at different times). cpuPercent
+    // < 0 is the sentinel meaning "this event has no new cpu/memory data -
+    // only look at tpsText". Real samples are always >= 0.
+    double cpuPercent = -1.0;
+    std::uint64_t memoryBytes = 0;
+    std::wstring tpsText;               // non-empty only when a "/tps" reply was just parsed
 };
 
 } // namespace core

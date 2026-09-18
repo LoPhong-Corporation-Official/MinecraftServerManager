@@ -41,13 +41,56 @@ QLabel#statsLabel {
     color: #9aa0ac;
     font-family: Consolas, monospace;
 }
+QLabel#hintLabel {
+    color: #7a7f8a;
+    font-size: 8.5pt;
+}
+QComboBox {
+    background-color: #14161c;
+    border: 1px solid #2a2e38;
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+QComboBox:focus {
+    border: 1px solid #4a90e2;
+}
+QComboBox QAbstractItemView {
+    background-color: #1e2129;
+    border: 1px solid #2a2e38;
+    selection-background-color: #2c5628;
+}
+QFrame#card {
+    background-color: #1e2129;
+    border: 1px solid #2a2e38;
+    border-radius: 14px;
+}
+QToolBar {
+    background-color: #1b1e25;
+    border: none;
+    border-bottom: 1px solid #2a2e38;
+    padding: 6px 12px;
+    spacing: 6px;
+}
+QToolButton {
+    background-color: transparent;
+    color: #e7e9ee;
+    padding: 7px 12px;
+    border-radius: 6px;
+    font-weight: 500;
+}
+QToolButton:hover {
+    background-color: #262a34;
+}
+QToolButton:pressed {
+    background-color: #2f333f;
+}
 QSplitter::handle {
-    background-color: #16181d;
-    width: 8px;
+    background-color: transparent;
+    width: 18px;
 }
 QListWidget {
-    background-color: #1e2129;
-    border: 1px solid #333844;
+    background-color: #14161c;
+    border: 1px solid #2a2e38;
     border-radius: 8px;
     padding: 6px;
     outline: 0;
@@ -58,7 +101,7 @@ QListWidget::item {
     margin: 2px 0;
 }
 QListWidget::item:hover {
-    background-color: #262a34;
+    background-color: #20242e;
 }
 QListWidget::item:selected {
     background-color: #2c5628;
@@ -67,13 +110,13 @@ QListWidget::item:selected {
 QPlainTextEdit#consoleView {
     background-color: #0d0e12;
     color: #c9d1d9;
-    border: 1px solid #333844;
+    border: 1px solid #2a2e38;
     border-radius: 8px;
     padding: 10px;
 }
 QLineEdit {
-    background-color: #1e2129;
-    border: 1px solid #333844;
+    background-color: #14161c;
+    border: 1px solid #2a2e38;
     border-radius: 6px;
     padding: 7px 10px;
     selection-background-color: #4a90e2;

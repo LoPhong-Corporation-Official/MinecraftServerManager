@@ -28,10 +28,12 @@ include(cmake/CompilerOptions.cmake)
 
 # If CMake cannot find Qt6, point it at your install, e.g.:
 #   cmake -S . -B build -A x64 -DCMAKE_PREFIX_PATH="C:/Qt/6.7.0/msvc2019_64"
+# Network is required for the Modrinth mods/plugins/modpacks library
+# (ui::LibraryDialog / net::ModrinthClient).
 set(Qt6_DIR
     "C:/Qt/6.11.2/msvc2022_64/lib/cmake/Qt6"
 )
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
 
 add_executable(MinecraftServerManager WIN32
     src/main.cpp
@@ -68,10 +70,15 @@ add_executable(MinecraftServerManager WIN32
     src/config/ConfigManager.hpp
     src/config/ConfigManager.cpp
 
+    src/net/ModrinthClient.hpp
+    src/net/ModrinthClient.cpp
+
     src/ui/MainWindow.hpp
     src/ui/MainWindow.cpp
     src/ui/AddServerDialog.hpp
     src/ui/AddServerDialog.cpp
+    src/ui/LibraryDialog.hpp
+    src/ui/LibraryDialog.cpp
 )
 
 target_include_directories(MinecraftServerManager PRIVATE src)
@@ -90,6 +97,7 @@ target_compile_definitions(MinecraftServerManager PRIVATE
 target_link_libraries(MinecraftServerManager PRIVATE
     Qt6::Core
     Qt6::Widgets
+    Qt6::Network
 )
 
 msm_apply_compiler_options(MinecraftServerManager)

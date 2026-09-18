@@ -12,13 +12,38 @@ thay thế phần hiển thị.
   `Fusion`, nút bấm có màu theo hành động (Start xanh lá, Stop đỏ, Restart vàng cam, Gửi xanh
   dương), danh sách server có hover/selection rõ ràng, có thanh chia `QSplitter` kéo được giữa
   2 panel, nhãn trạng thái đổi màu theo state (●  Running màu xanh, Crashed màu đỏ...).
-- **Phase 2 — Process Monitoring**: `monitor::ProcessMonitor` lấy mẫu CPU%/RAM của tiến trình
-  java.exe mỗi 2 giây (dùng `GetProcessTimes` + `K32GetProcessMemoryInfo`, thuần Win32, không
-  thêm thư viện ngoài), hiển thị ngay trên thanh trạng thái ("CPU 12.3% · RAM 1024 MB") khi
-  server đang chạy.
-  - **Chưa làm TPS/MSPT** trong bản này: để lấy đáng tin cậy cần RCON hoặc lệnh console riêng
-    của Paper/Spigot; nếu tự động gửi lệnh `tps` định kỳ vào console của server Vanilla sẽ chỉ
-    tạo ra dòng "Unknown command" gây rối mắt. Sẽ làm cùng lúc với Java Manager/RCON ở phase sau.
+- **Phase 2 — Process Monitoring (đầy đủ)**: `monitor::ProcessMonitor` lấy mẫu CPU%/RAM của tiến
+  trình java.exe mỗi 2 giây (dùng `GetProcessTimes` + `K32GetProcessMemoryInfo`, thuần Win32,
+  không thêm thư viện ngoài). **TPS**: tự động gửi lệnh `/tps` mỗi ~10 giây **chỉ với** server
+  khai là Paper/Spigot/Purpur/Bukkit/Folia (chọn trong dialog "Thêm Server" → "Loại server"),
+  parse dòng phản hồi `"TPS from last 1m, 5m, 15m: ..."` (tự bỏ mã màu §) để hiển thị. Vanilla/
+  Forge/Fabric sẽ không bị tự động gửi lệnh lạ vào console. Kể cả gõ tay `/tps` cũng được nhận
+  diện và hiển thị lên UI. Tất cả hiện trên thanh trạng thái: `CPU 12.3% · RAM 1024 MB · TPS from
+  last 1m, 5m, 15m: 20.0, 20.0, 20.0`.
+  - **MSPT vẫn chưa làm** (Paper có lệnh `/mspt` riêng, định dạng phản hồi khác `/tps` và mình
+    chưa có mẫu output thật để parse chắc chắn) — để dành phase sau khi có thể test trên server
+    thật.
+
+## Đã sửa/thêm ở bản này
+
+- **Nút Browse**: 3 trường "Thư mục server", "Tên file jar", "Đường dẫn java.exe" trong dialog
+  "Thêm Server" giờ có nút "..." mở `QFileDialog` thay vì phải gõ tay đường dẫn.
+- **Toolbar**: thanh công cụ trên cùng với "🆕 Server mới", "🗑 Xoá server", "📚 Thư viện
+  Mod/Plugin", "⟲ Làm mới".
+- **Trang khởi động (startup page)**: nếu chưa có server nào, cửa sổ hiện màn hình chào mừng với
+  nút "+ Tạo Server Đầu Tiên" thay vì một console trống trơn. Tự chuyển sang giao diện quản lý
+  bình thường ngay khi có ít nhất 1 server.
+- **Thư viện Modrinth** (`ui::LibraryDialog` + `net::ModrinthClient`, dùng `QNetworkAccessManager`
+  + `QJsonDocument` sẵn có trong Qt, không cần thư viện ngoài): tìm kiếm Mod / Plugin / Modpack /
+  Resource Pack / Shader qua API công khai của Modrinth (`api.modrinth.com/v2`), chọn kết quả rồi
+  bấm "Cài vào server này" — app tự lấy bản build mới nhất, tải file chính (`primary file`) và bỏ
+  đúng thư mục (`mods/`, `plugins/`, `resourcepacks/`, `shaderpacks/`) trong thư mục server đang
+  chọn. Riêng **modpack chỉ tải file `.mrpack` về**, chưa tự giải nén/cài — nói rõ trong UI sau
+  khi tải xong.
+  - Mở từ toolbar ("📚 Thư viện Mod/Plugin") hoặc phải chọn/tạo server trước (Modrinth cần biết
+    cài vào thư mục nào).
+  - Cần máy có kết nối internet khi dùng tính năng này (mọi phần khác của app hoạt động hoàn
+    toàn offline).
 
 ## Đã sửa so với lần build lỗi trước
 
@@ -35,7 +60,8 @@ tự viết tay của bản Win32 trước.
 ## Yêu cầu
 
 - **Visual Studio 2022+ (MSVC)**, **CMake ≥ 3.21**, Windows 10/11 x64.
-- **Qt6** (khuyến nghị 6.5+), component `Core` + `Widgets`. Cài qua Qt Online Installer:
+- **Qt6** (khuyến nghị 6.5+), component `Core` + `Widgets` + `Network` (Network dùng cho Thư
+  viện Modrinth). Cài qua Qt Online Installer:
   https://www.qt.io/download-qt-installer — chọn bản ứng với trình biên dịch của bạn, ví dụ
   `MSVC 2019 64-bit` hoặc `MSVC 2022 64-bit`.
 
@@ -88,15 +114,14 @@ vì đây là yêu cầu của chính Mojang, Manager không (và không nên) t
 
 ## Không nằm trong MVP này (theo đúng lộ trình Phase 2–6 của spec)
 
-- **TPS/MSPT thật** (đọc từ RCON hoặc plugin) — xem giải thích ở trên.
+- **MSPT** — xem giải thích ở trên.
 - **Java Manager** (tự phát hiện các bản JDK/JRE đã cài) — Phase 3. Hiện người dùng tự nhập
-  đường dẫn `java.exe`.
+  đường dẫn `java.exe` (đã có nút Browse để chọn file thay vì gõ tay).
 - **server.properties editor, EULA helper, Whitelist/OP UI** — Phase 3.
 - **BackupManager** (tạo/restore/nén/retention) — Phase 4.
-- **Server Providers** (tự tải Paper/Fabric/Forge...) — Phase 5.
+- **Cài đặt modpack tự động** (giải nén `.mrpack`, tải toàn bộ dependency, áp overrides) — Thư
+  viện Modrinth hiện chỉ tải file modpack về, chưa tự cài; xem mục "Thư viện Modrinth" bên dưới.
 - **Playit.gg / Cloudflare Tunnel / firewall integration** — Phase 6.
-- Dialog "Thêm Server" chưa có nút "Browse..." chọn thư mục/file (`QFileDialog` sẽ dễ thêm sau
-  này — Qt làm việc này đơn giản hơn nhiều so với `IFileDialog`/COM ở bản Win32 thuần).
 
 ## Giới hạn kỹ thuật đã biết (được ghi nhận có chủ đích, không phải bug bỏ sót)
 

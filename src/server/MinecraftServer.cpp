@@ -2,7 +2,11 @@
 
 #include "core/Logger.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cwctype>
 #include <format>
+#include <optional>
 
 namespace server
 {
@@ -11,6 +15,53 @@ namespace
 constexpr int kMaxAutoRestarts = 5;
 constexpr auto kAutoRestartWindow = std::chrono::minutes(10);
 constexpr auto kAutoRestartDelay = std::chrono::seconds(2);
+
+// Every 5th stats sample (~10s at the default 2s sampling interval) we
+// auto-send "/tps" for server types known to implement it.
+constexpr int kTpsQueryEveryNTicks = 5;
+
+// Server-type names (case-insensitive) known to answer a console "/tps"
+// command. Auto-sending it to anything else (vanilla, Forge, Fabric...)
+// would just spam "Unknown command" into the user's console.
+constexpr std::array<const wchar_t*, 5> kTpsCapableServerTypes = {
+    L"paper", L"spigot", L"purpur", L"bukkit", L"folia"
+};
+
+std::wstring ToLower(std::wstring text)
+{
+    std::transform(text.begin(), text.end(), text.begin(), [](wchar_t c) {
+        return static_cast<wchar_t>(std::towlower(c));
+    });
+    return text;
+}
+
+// Paper/Spigot/Purpur reply to "/tps" with a line like:
+//   "TPS from last 1m, 5m, 15m: 20.0, 20.0, 20.0"
+// often prefixed with Minecraft colour codes (a section sign U+00A7
+// followed by one format character), which are stripped before matching.
+std::optional<std::wstring> TryParseTpsLine(const std::wstring& line)
+{
+    std::wstring clean;
+    clean.reserve(line.size());
+    for (size_t i = 0; i < line.size(); ++i)
+    {
+        if (line[i] == static_cast<wchar_t>(0x00A7) && i + 1 < line.size())
+        {
+            ++i; // skip the section sign AND the format character after it
+            continue;
+        }
+        clean += line[i];
+    }
+
+    constexpr const wchar_t* marker = L"TPS from last";
+    const auto pos = clean.find(marker);
+    if (pos == std::wstring::npos)
+    {
+        return std::nullopt;
+    }
+    return clean.substr(pos);
+}
+
 } // namespace
 
 MinecraftServer::MinecraftServer(core::ServerConfig config, std::shared_ptr<core::EventDispatcher> events)
@@ -40,6 +91,7 @@ bool MinecraftServer::Start()
 
     SetState(core::ServerState::Starting);
     stopRequested_ = false;
+    statsTickCounter_ = 0;
 
     process::Process::StartOptions options;
     options.executablePath = config_.javaExecutable;
@@ -148,6 +200,23 @@ void MinecraftServer::OnConsoleLine(const std::wstring& line)
         event.message = line;
         events_->Publish(event);
     }
+
+    // Phase 2: opportunistically pick up a TPS reply if one just came
+    // through, regardless of whether we were the one who asked for it
+    // (an admin typing "/tps" by hand in the console still gets picked up
+    // and reflected in the UI).
+    if (events_)
+    {
+        if (auto tpsText = TryParseTpsLine(line))
+        {
+            core::AppEvent statsEvent;
+            statsEvent.type = core::EventType::StatsUpdated;
+            statsEvent.serverId = config_.id;
+            statsEvent.cpuPercent = -1.0; // sentinel: no cpu/mem data in this event
+            statsEvent.tpsText = *tpsText;
+            events_->Publish(statsEvent);
+        }
+    }
 }
 
 void MinecraftServer::OnStatsSample(const monitor::ProcessMonitor::Sample& sample)
@@ -161,6 +230,23 @@ void MinecraftServer::OnStatsSample(const monitor::ProcessMonitor::Sample& sampl
         event.memoryBytes = sample.memoryBytes;
         events_->Publish(event);
     }
+
+    if (SupportsTpsQuery())
+    {
+        const int tick = statsTickCounter_.fetch_add(1) + 1;
+        if (tick % kTpsQueryEveryNTicks == 0)
+        {
+            process_.WriteLine(L"tps");
+        }
+    }
+}
+
+bool MinecraftServer::SupportsTpsQuery() const
+{
+    const std::wstring lowered = ToLower(config_.serverType);
+    return std::any_of(kTpsCapableServerTypes.begin(), kTpsCapableServerTypes.end(), [&](const wchar_t* type) {
+        return lowered == type;
+    });
 }
 
 void MinecraftServer::WatchForExit()
