@@ -56,11 +56,19 @@ private slots:
     void OnRestartClicked();
     void OnSendCommandClicked();
     void OnServerSelectionChanged();
-    void OnOpenLibraryClicked(); // Modrinth mods/plugins/modpacks browser
+    void OnOpenLibraryClicked();    // Modrinth mods/plugins/modpacks browser
+    void OnOpenPropertiesClicked(); // Phase 3: server.properties editor
+    void OnOpenPlayersClicked();    // Phase 3: whitelist/op UI
+    void OnOpenBackupsClicked();    // Phase 4: backup manager
+    void OnAcceptEulaClicked();     // Phase 3: EULA helper
+    void OnImportServerClicked();       // Fork-inspired: import an existing server folder
+    void OnOpenInstalledAddonsClicked(); // Fork-inspired: view/remove installed plugins/mods
+    void OnOpenAdvancedSettingsClicked(); // Phase 6 tunnel + scheduled restart
 
 private:
     void BuildToolbar();
     void HandleAppEvent(core::AppEvent event); // always runs on the UI thread
+    void AcceptEulaForCurrentServer(); // shared by the toolbar action and the auto-prompt
     void RefreshServerList();
     void RefreshSelectedServerConsole();
     void RefreshControlsForState();

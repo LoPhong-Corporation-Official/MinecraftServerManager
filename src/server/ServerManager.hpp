@@ -42,6 +42,12 @@ public:
     // MinecraftServer for each. Call once at startup.
     void LoadFromConfig(config::ConfigManager& configManager);
 
+    // Persists every server's *current* config (as returned by each
+    // MinecraftServer::GetConfig()) to disk. Call after mutating a
+    // server's config in place via MinecraftServer::UpdateConfig() (e.g.
+    // from ui::AdvancedSettingsDialog) so the change survives a restart.
+    void SaveAll(config::ConfigManager& configManager) const;
+
 private:
     [[nodiscard]] std::wstring GenerateServerId() const;
 

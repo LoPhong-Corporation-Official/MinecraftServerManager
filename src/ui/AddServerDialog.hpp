@@ -6,6 +6,7 @@
 // AddServer() assigns it).
 
 #include "core/Types.hpp"
+#include "net/ServerProviderClient.hpp"
 
 #include <QDialog>
 
@@ -14,6 +15,7 @@
 class QLineEdit;
 class QLabel;
 class QComboBox;
+class QPushButton;
 
 namespace ui
 {
@@ -32,8 +34,15 @@ private slots:
     void OnBrowseDirectory();
     void OnBrowseJar();
     void OnBrowseJavaPath();
+    void OnProviderChanged();     // Phase 5
+    void OnRefreshVersionsClicked();
+    void OnDownloadJarClicked();
 
 private:
+    net::ServerProviderClient* providerClient_;
+    [[nodiscard]] net::ServerProviderType CurrentProviderType() const;
+    void LoadVersionsForCurrentProvider();
+
     QLineEdit* editName_ = nullptr;
     QLineEdit* editDirectory_ = nullptr;
     QLineEdit* editJar_ = nullptr;
@@ -43,6 +52,12 @@ private:
     QLineEdit* editMaxMemory_ = nullptr;
     QLineEdit* editPort_ = nullptr;
     QLabel* labelError_ = nullptr;
+
+    // Phase 5: Server Providers (download a server jar directly).
+    QComboBox* comboProvider_ = nullptr;
+    QComboBox* comboProviderVersion_ = nullptr;
+    QPushButton* buttonDownloadJar_ = nullptr;
+    QLabel* labelProviderStatus_ = nullptr;
 
     std::optional<core::ServerConfig> result_;
 };

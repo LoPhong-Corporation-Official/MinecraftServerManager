@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <ctime>
+#include <cwchar>
 #include <filesystem>
 
 namespace core

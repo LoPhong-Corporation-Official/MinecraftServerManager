@@ -49,6 +49,8 @@ add_executable(MinecraftServerManager WIN32
     src/core/Logger.cpp
     src/core/Json.hpp
     src/core/Json.cpp
+    src/core/StringUtil.hpp
+    src/core/StringUtil.cpp
 
     src/process/Process.hpp
     src/process/Process.cpp
@@ -58,6 +60,14 @@ add_executable(MinecraftServerManager WIN32
     src/monitor/ProcessMonitor.hpp
     src/monitor/ProcessMonitor.cpp
 
+    src/javamanager/JavaManager.hpp
+    src/javamanager/JavaManager.cpp
+
+    src/backup/ZipWriter.hpp
+    src/backup/ZipWriter.cpp
+    src/backup/BackupManager.hpp
+    src/backup/BackupManager.cpp
+
     src/console/ConsoleBuffer.hpp
     src/console/ConsoleController.hpp
     src/console/ConsoleController.cpp
@@ -66,12 +76,18 @@ add_executable(MinecraftServerManager WIN32
     src/server/MinecraftServer.cpp
     src/server/ServerManager.hpp
     src/server/ServerManager.cpp
+    src/server/ServerImporter.hpp
+    src/server/ServerImporter.cpp
 
     src/config/ConfigManager.hpp
     src/config/ConfigManager.cpp
+    src/config/ServerProperties.hpp
+    src/config/ServerProperties.cpp
 
     src/net/ModrinthClient.hpp
     src/net/ModrinthClient.cpp
+    src/net/ServerProviderClient.hpp
+    src/net/ServerProviderClient.cpp
 
     src/ui/MainWindow.hpp
     src/ui/MainWindow.cpp
@@ -79,6 +95,18 @@ add_executable(MinecraftServerManager WIN32
     src/ui/AddServerDialog.cpp
     src/ui/LibraryDialog.hpp
     src/ui/LibraryDialog.cpp
+    src/ui/PropertiesDialog.hpp
+    src/ui/PropertiesDialog.cpp
+    src/ui/PlayersDialog.hpp
+    src/ui/PlayersDialog.cpp
+    src/ui/BackupsDialog.hpp
+    src/ui/BackupsDialog.cpp
+    src/ui/ImportServerDialog.hpp
+    src/ui/ImportServerDialog.cpp
+    src/ui/InstalledAddonsDialog.hpp
+    src/ui/InstalledAddonsDialog.cpp
+    src/ui/AdvancedSettingsDialog.hpp
+    src/ui/AdvancedSettingsDialog.cpp
 )
 
 target_include_directories(MinecraftServerManager PRIVATE src)

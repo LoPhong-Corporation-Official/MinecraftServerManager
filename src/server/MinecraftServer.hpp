@@ -44,6 +44,24 @@ public:
 
     bool SendCommand(const std::wstring& command);
 
+    // Phase 3 EULA helper: rewrites eula.txt with eula=true (creating the
+    // file if it does not exist yet), preserving any other lines already
+    // in it. Does NOT start the server - the caller decides whether/when
+    // to call Start() afterwards. This never runs silently on its own:
+    // it is only ever invoked in direct response to the user explicitly
+    // agreeing to the EULA in the UI (see ui::MainWindow's EULA prompt).
+    bool AcceptEula() const;
+
+    // Phase 6: starts/stops the optional companion process (Playit.gg
+    // agent, cloudflared, or any executable) configured in
+    // config_.tunnel. Its console output is folded into this server's own
+    // console (prefixed "[tunnel] "), so no separate UI plumbing is
+    // needed to see it. Independent of the Minecraft process itself -
+    // callable whether or not the server is currently running.
+    bool StartTunnel();
+    bool StopTunnel();
+    [[nodiscard]] bool IsTunnelRunning() const { return tunnelProcess_.IsRunning(); }
+
     [[nodiscard]] core::ServerState GetState() const { return state_.load(); }
     [[nodiscard]] const core::ServerConfig& GetConfig() const { return config_; }
     void UpdateConfig(core::ServerConfig config) { config_ = std::move(config); }
@@ -58,6 +76,8 @@ private:
     void WatchForExit();       // runs on watcherThread_
     void HandleUnexpectedExit();
     [[nodiscard]] bool ShouldAutoRestart();
+    [[nodiscard]] bool IsEulaNotAccepted() const; // Phase 3
+    void ScheduledRestartLoop(std::stop_token stopToken); // runs on scheduledRestartThread_
 
     core::ServerConfig config_;
     std::shared_ptr<core::EventDispatcher> events_;
@@ -70,6 +90,13 @@ private:
     console::ConsoleController stderrController_;
     console::ConsoleBuffer consoleBuffer_;
 
+    // Phase 6: the optional tunnel companion process. Declared alongside
+    // process_/stdoutController_ so it follows the same "controllers
+    // destroyed before the Process they read from" ordering rule.
+    process::Process tunnelProcess_;
+    console::ConsoleController tunnelStdoutController_;
+    console::ConsoleController tunnelStderrController_;
+
     std::atomic<core::ServerState> state_{core::ServerState::Stopped};
     std::atomic<bool> stopRequested_{false};
     std::atomic<int> statsTickCounter_{0}; // Phase 2: throttles auto "/tps" queries
@@ -80,6 +107,10 @@ private:
     // 5 within 10 minutes").
     std::mutex restartMutex_;
     std::vector<std::chrono::steady_clock::time_point> recentRestarts_;
+
+    // Declared last so it is destroyed FIRST (before process_ and
+    // everything else it might touch via GetState()/WriteLine()/Restart()).
+    std::jthread scheduledRestartThread_;
 };
 
 } // namespace server

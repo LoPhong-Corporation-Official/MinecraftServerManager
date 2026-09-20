@@ -6,6 +6,7 @@
 #include <array>
 #include <cwctype>
 #include <format>
+#include <fstream>
 #include <optional>
 
 namespace server
@@ -121,6 +122,21 @@ bool MinecraftServer::Start()
     processMonitor_.Start(process_.GetProcessHandle(), [this](const monitor::ProcessMonitor::Sample& sample) {
         OnStatsSample(sample);
     });
+
+    // Phase 6: optionally bring the tunnel companion process up alongside
+    // the Minecraft server itself.
+    if (config_.tunnel.enabled && config_.tunnel.autoStartWithServer)
+    {
+        StartTunnel();
+    }
+
+    // Fork-inspired scheduled restart: only armed if configured, and only
+    // for this run - WatchForExit() stops this thread once the process
+    // exits for any reason, and a fresh one is created on the next Start().
+    if (config_.scheduledRestart.enabled && config_.scheduledRestart.intervalHours > 0)
+    {
+        scheduledRestartThread_ = std::jthread([this](std::stop_token stopToken) { ScheduledRestartLoop(stopToken); });
+    }
 
     watcherThread_ = std::jthread([this](std::stop_token) { WatchForExit(); });
 
@@ -259,12 +275,29 @@ void MinecraftServer::WatchForExit()
     DWORD exitCode = 0;
     process_.GetExitCode(exitCode);
 
+    // Whatever happens next (Stopped, Crashed, or an imminent
+    // auto-restart), the scheduled-restart loop for THIS run is done -
+    // stop it here rather than leaving it sleeping for up to
+    // `intervalHours` against a server that is no longer running. Safe to
+    // call from here (watcherThread_) since it's a different thread
+    // object than scheduledRestartThread_ itself - no self-join hazard.
+    // Start() creates a fresh one if/when the server runs again.
+    if (scheduledRestartThread_.joinable())
+    {
+        scheduledRestartThread_.request_stop();
+        scheduledRestartThread_.join();
+    }
+
     const bool wasStopRequested = stopRequested_.load();
 
     if (wasStopRequested)
     {
         consoleBuffer_.Append(L"[manager] Server process stopped.");
         SetState(core::ServerState::Stopped);
+        if (IsTunnelRunning())
+        {
+            StopTunnel(); // don't leave the tunnel up once the server itself is down
+        }
     }
     else
     {
@@ -286,6 +319,28 @@ void MinecraftServer::HandleUnexpectedExit()
         events_->Publish(event);
     }
 
+    // Phase 3 EULA helper: Minecraft's own first-run behaviour is to
+    // write a fresh eula.txt (with eula=false) and exit immediately -
+    // this is the single most common reason a brand-new server "crashes"
+    // on its very first start. Detect that specific, well-known pattern
+    // and tell the user clearly what to do, instead of just labelling it
+    // a generic crash and (if autoRestart is on) looping forever trying
+    // to relaunch a server that will refuse to start every time.
+    if (IsEulaNotAccepted())
+    {
+        consoleBuffer_.Append(
+            L"[manager] Server dừng vì chưa chấp nhận Minecraft EULA. "
+            L"Dùng nút \"📜 Chấp nhận EULA\" trên toolbar rồi Start lại.");
+        if (events_)
+        {
+            core::AppEvent eulaEvent;
+            eulaEvent.type = core::EventType::EulaRequired;
+            eulaEvent.serverId = config_.id;
+            events_->Publish(eulaEvent);
+        }
+        return; // do not auto-restart into the same dead end
+    }
+
     if (!config_.autoRestart || !ShouldAutoRestart())
     {
         return;
@@ -303,6 +358,75 @@ void MinecraftServer::HandleUnexpectedExit()
         std::this_thread::sleep_for(kAutoRestartDelay);
         Start();
     }).detach();
+}
+
+bool MinecraftServer::IsEulaNotAccepted() const
+{
+    // eula.txt is a plain Java Properties file, always ASCII in practice
+    // ("eula=false"/"eula=true" plus a comment line), so a narrow
+    // std::ifstream is fine here - no UTF-8 decoding concerns like the
+    // JSON config file has.
+    std::ifstream file(config_.directory / L"eula.txt");
+    if (!file.is_open())
+    {
+        return false; // no eula.txt yet is not itself evidence of anything
+    }
+    std::string line;
+    while (std::getline(file, line))
+    {
+        if (line.find("eula=false") != std::string::npos)
+        {
+            return true;
+        }
+        if (line.find("eula=true") != std::string::npos)
+        {
+            return false;
+        }
+    }
+    return false;
+}
+
+bool MinecraftServer::AcceptEula() const
+{
+    const auto eulaPath = config_.directory / L"eula.txt";
+
+    std::vector<std::string> lines;
+    bool foundEulaLine = false;
+    {
+        std::ifstream in(eulaPath);
+        std::string line;
+        while (std::getline(in, line))
+        {
+            if (line.rfind("eula=", 0) == 0) // starts with "eula="
+            {
+                lines.push_back("eula=true");
+                foundEulaLine = true;
+            }
+            else
+            {
+                lines.push_back(line);
+            }
+        }
+    }
+    if (!foundEulaLine)
+    {
+        lines.push_back("eula=true");
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(config_.directory, ec);
+
+    std::ofstream out(eulaPath, std::ios::trunc);
+    if (!out.is_open())
+    {
+        core::Logger::Instance().Error(std::format(L"Failed to write {}", eulaPath.wstring()));
+        return false;
+    }
+    for (const auto& line : lines)
+    {
+        out << line << "\n";
+    }
+    return true;
 }
 
 bool MinecraftServer::ShouldAutoRestart()
@@ -325,6 +449,115 @@ bool MinecraftServer::ShouldAutoRestart()
 
     recentRestarts_.push_back(now);
     return true;
+}
+
+bool MinecraftServer::StartTunnel()
+{
+    if (config_.tunnel.executablePath.empty())
+    {
+        consoleBuffer_.Append(L"[manager] Chưa cấu hình đường dẫn cho tunnel (Playit.gg/Cloudflare Tunnel/...).");
+        return false;
+    }
+    if (tunnelProcess_.IsRunning())
+    {
+        return false; // already running
+    }
+
+    process::Process::StartOptions options;
+    options.executablePath = config_.tunnel.executablePath;
+    options.workingDirectory = config_.tunnel.executablePath.parent_path();
+    options.arguments = config_.tunnel.arguments;
+
+    if (!tunnelProcess_.Start(options))
+    {
+        consoleBuffer_.Append(L"[manager] Không khởi động được tunnel process.");
+        return false;
+    }
+
+    tunnelStdoutController_.Start(tunnelProcess_.GetStdoutReadHandle(), [this](const std::wstring& line) {
+        OnConsoleLine(L"[tunnel] " + line);
+    });
+    tunnelStderrController_.Start(tunnelProcess_.GetStderrReadHandle(), [this](const std::wstring& line) {
+        OnConsoleLine(L"[tunnel] " + line);
+    });
+
+    consoleBuffer_.Append(L"[manager] Tunnel process started.");
+    return true;
+}
+
+bool MinecraftServer::StopTunnel()
+{
+    if (!tunnelProcess_.IsRunning())
+    {
+        return false;
+    }
+    // Tunnel agents (playit.exe, cloudflared.exe, ...) don't share a
+    // universal graceful "stop" console command the way Minecraft does,
+    // so this goes straight to a clean process termination via the same
+    // Job-Object-backed Process class the Minecraft server itself uses.
+    tunnelProcess_.Terminate(0);
+    tunnelStdoutController_.Stop();
+    tunnelStderrController_.Stop();
+    consoleBuffer_.Append(L"[manager] Tunnel process stopped.");
+    return true;
+}
+
+namespace
+{
+// Sleeps in small steps so a stop_token can interrupt a long wait
+// promptly instead of only being checked once every multi-hour interval.
+void InterruptibleSleep(std::chrono::seconds duration, std::stop_token stopToken)
+{
+    constexpr auto kStep = std::chrono::seconds(2);
+    auto remaining = duration;
+    while (remaining.count() > 0 && !stopToken.stop_requested())
+    {
+        const auto step = std::min(remaining, kStep);
+        std::this_thread::sleep_for(step);
+        remaining -= step;
+    }
+}
+} // namespace
+
+void MinecraftServer::ScheduledRestartLoop(std::stop_token stopToken)
+{
+    const auto fullInterval = std::chrono::seconds(static_cast<long long>(config_.scheduledRestart.intervalHours) * 3600);
+    constexpr auto kWarningLeadTime = std::chrono::seconds(60);
+    const auto beforeWarning = fullInterval > kWarningLeadTime ? fullInterval - kWarningLeadTime : std::chrono::seconds(0);
+
+    while (!stopToken.stop_requested())
+    {
+        InterruptibleSleep(beforeWarning, stopToken);
+        if (stopToken.stop_requested())
+        {
+            return;
+        }
+
+        if (GetState() == core::ServerState::Running)
+        {
+            process_.WriteLine(L"say [Manager] Server sẽ tự khởi động lại sau 60 giây.");
+        }
+
+        InterruptibleSleep(kWarningLeadTime, stopToken);
+        if (stopToken.stop_requested())
+        {
+            return;
+        }
+
+        if (GetState() == core::ServerState::Running)
+        {
+            // Restart() itself calls Stop()+Start(), and Start() will
+            // create a brand-new scheduledRestartThread_ - reassigning a
+            // jthread joins its previous holder first. Since THIS
+            // function runs on scheduledRestartThread_, calling Restart()
+            // directly here would mean that join() targets its own
+            // thread once Start() runs (undefined behaviour), same
+            // hazard already solved for the crash-triggered auto-restart
+            // path. Handing it to a short-lived helper thread avoids it.
+            std::thread([this]() { Restart(); }).detach();
+            return; // this run's job is done either way
+        }
+    }
 }
 
 } // namespace server

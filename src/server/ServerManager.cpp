@@ -39,12 +39,7 @@ std::wstring ServerManager::AddServer(core::ServerConfig config, config::ConfigM
 
     // Persist immediately so a crash right after adding a server does not
     // lose the profile.
-    std::vector<core::ServerConfig> allConfigs;
-    for (const auto& server : GetAll())
-    {
-        allConfigs.push_back(server->GetConfig());
-    }
-    configManager.Save(allConfigs);
+    SaveAll(configManager);
 
     core::Logger::Instance().Info(std::format(L"Added server profile '{}' ({})", config.name, config.id));
     return config.id;
@@ -69,12 +64,7 @@ bool ServerManager::RemoveServer(const std::wstring& id, config::ConfigManager& 
         toRemove->Stop();
     }
 
-    std::vector<core::ServerConfig> allConfigs;
-    for (const auto& server : GetAll())
-    {
-        allConfigs.push_back(server->GetConfig());
-    }
-    configManager.Save(allConfigs);
+    SaveAll(configManager);
     return true;
 }
 
@@ -102,6 +92,16 @@ void ServerManager::LoadFromConfig(config::ConfigManager& configManager)
         servers_.push_back(std::make_shared<MinecraftServer>(cfg, events_));
     }
     core::Logger::Instance().Info(std::format(L"Loaded {} server profile(s).", servers_.size()));
+}
+
+void ServerManager::SaveAll(config::ConfigManager& configManager) const
+{
+    std::vector<core::ServerConfig> allConfigs;
+    for (const auto& server : GetAll())
+    {
+        allConfigs.push_back(server->GetConfig());
+    }
+    configManager.Save(allConfigs);
 }
 
 } // namespace server

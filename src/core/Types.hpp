@@ -135,6 +135,30 @@ struct ServerConfig
 
     bool autoRestart = false;
     bool autoBackup = false;
+
+    // Phase 6: an optional companion process (Playit.gg agent, Cloudflare
+    // Tunnel's cloudflared, or any other executable) managed alongside the
+    // Minecraft server itself. This app does not implement (or reimplement)
+    // either service's tunneling protocol - it only starts/stops whichever
+    // executable the user already has, the same way it starts/stops
+    // java.exe, and folds its console output into the same console view
+    // (prefixed "[tunnel] ") so the public address it prints is visible
+    // without a separate terminal window.
+    struct TunnelConfig
+    {
+        bool enabled = false;
+        std::filesystem::path executablePath;
+        std::wstring arguments;
+        bool autoStartWithServer = false;
+    } tunnel;
+
+    // Fork-inspired: restart on a fixed schedule (not just on crash), with
+    // a single "restarting in 60s" in-game warning first.
+    struct ScheduledRestartConfig
+    {
+        bool enabled = false;
+        int intervalHours = 24;
+    } scheduledRestart;
 };
 
 } // namespace core

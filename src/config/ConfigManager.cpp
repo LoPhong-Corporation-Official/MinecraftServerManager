@@ -69,6 +69,19 @@ core::json::JsonValue ToJson(const core::ServerConfig& server)
     obj.Set(L"port", JsonValue::MakeNumber(static_cast<double>(server.port)));
     obj.Set(L"autoRestart", JsonValue::MakeBool(server.autoRestart));
     obj.Set(L"autoBackup", JsonValue::MakeBool(server.autoBackup));
+
+    JsonValue tunnel = JsonValue::MakeObject();
+    tunnel.Set(L"enabled", JsonValue::MakeBool(server.tunnel.enabled));
+    tunnel.Set(L"executablePath", JsonValue::MakeString(server.tunnel.executablePath.wstring()));
+    tunnel.Set(L"arguments", JsonValue::MakeString(server.tunnel.arguments));
+    tunnel.Set(L"autoStartWithServer", JsonValue::MakeBool(server.tunnel.autoStartWithServer));
+    obj.Set(L"tunnel", tunnel);
+
+    JsonValue scheduledRestart = JsonValue::MakeObject();
+    scheduledRestart.Set(L"enabled", JsonValue::MakeBool(server.scheduledRestart.enabled));
+    scheduledRestart.Set(L"intervalHours", JsonValue::MakeNumber(server.scheduledRestart.intervalHours));
+    obj.Set(L"scheduledRestart", scheduledRestart);
+
     return obj;
 }
 
@@ -87,6 +100,24 @@ core::ServerConfig FromJson(const core::json::JsonValue& obj)
     if (const auto* v = obj.Find(L"port")) server.port = static_cast<std::uint16_t>(v->AsNumber(25565));
     if (const auto* v = obj.Find(L"autoRestart")) server.autoRestart = v->AsBool();
     if (const auto* v = obj.Find(L"autoBackup")) server.autoBackup = v->AsBool();
+
+    if (const auto* tunnel = obj.Find(L"tunnel"))
+    {
+        if (const auto* v = tunnel->Find(L"enabled")) server.tunnel.enabled = v->AsBool();
+        if (const auto* v = tunnel->Find(L"executablePath")) server.tunnel.executablePath = v->AsString();
+        if (const auto* v = tunnel->Find(L"arguments")) server.tunnel.arguments = v->AsString();
+        if (const auto* v = tunnel->Find(L"autoStartWithServer")) server.tunnel.autoStartWithServer = v->AsBool();
+    }
+
+    if (const auto* scheduledRestart = obj.Find(L"scheduledRestart"))
+    {
+        if (const auto* v = scheduledRestart->Find(L"enabled")) server.scheduledRestart.enabled = v->AsBool();
+        if (const auto* v = scheduledRestart->Find(L"intervalHours"))
+        {
+            server.scheduledRestart.intervalHours = static_cast<int>(v->AsNumber(24));
+        }
+    }
+
     return server;
 }
 

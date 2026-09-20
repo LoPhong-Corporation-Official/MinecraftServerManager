@@ -64,6 +64,19 @@ QFrame#card {
     border: 1px solid #2a2e38;
     border-radius: 14px;
 }
+QGroupBox {
+    border: 1px solid #2a2e38;
+    border-radius: 10px;
+    margin-top: 14px;
+    padding-top: 16px;
+    font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 6px;
+    color: #e7e9ee;
+}
 QToolBar {
     background-color: #1b1e25;
     border: none;

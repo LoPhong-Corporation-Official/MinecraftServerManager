@@ -1,7 +1,13 @@
 #include "ui/MainWindow.hpp"
 
 #include "ui/AddServerDialog.hpp"
+#include "ui/AdvancedSettingsDialog.hpp"
+#include "ui/BackupsDialog.hpp"
+#include "ui/ImportServerDialog.hpp"
+#include "ui/InstalledAddonsDialog.hpp"
 #include "ui/LibraryDialog.hpp"
+#include "ui/PlayersDialog.hpp"
+#include "ui/PropertiesDialog.hpp"
 
 #include <QAction>
 #include <QFont>
@@ -254,13 +260,38 @@ void MainWindow::BuildToolbar()
     auto* actionNew = toolbar_->addAction(QStringLiteral("🆕  Server mới"));
     connect(actionNew, &QAction::triggered, this, &MainWindow::OnAddServerClicked);
 
+    auto* actionImport = toolbar_->addAction(QStringLiteral("📥  Import Server"));
+    connect(actionImport, &QAction::triggered, this, &MainWindow::OnImportServerClicked);
+
     auto* actionRemove = toolbar_->addAction(QStringLiteral("🗑  Xoá server"));
     connect(actionRemove, &QAction::triggered, this, &MainWindow::OnRemoveServerClicked);
 
     toolbar_->addSeparator();
 
+    auto* actionProperties = toolbar_->addAction(QStringLiteral("⚙️  server.properties"));
+    connect(actionProperties, &QAction::triggered, this, &MainWindow::OnOpenPropertiesClicked);
+
+    auto* actionPlayers = toolbar_->addAction(QStringLiteral("👥  Người chơi"));
+    connect(actionPlayers, &QAction::triggered, this, &MainWindow::OnOpenPlayersClicked);
+
+    auto* actionBackups = toolbar_->addAction(QStringLiteral("💾  Backups"));
+    connect(actionBackups, &QAction::triggered, this, &MainWindow::OnOpenBackupsClicked);
+
+    auto* actionEula = toolbar_->addAction(QStringLiteral("📜  Chấp nhận EULA"));
+    connect(actionEula, &QAction::triggered, this, &MainWindow::OnAcceptEulaClicked);
+
+    toolbar_->addSeparator();
+
     auto* actionLibrary = toolbar_->addAction(QStringLiteral("📚  Thư viện Mod/Plugin"));
     connect(actionLibrary, &QAction::triggered, this, &MainWindow::OnOpenLibraryClicked);
+
+    auto* actionInstalled = toolbar_->addAction(QStringLiteral("🧩  Đã cài"));
+    connect(actionInstalled, &QAction::triggered, this, &MainWindow::OnOpenInstalledAddonsClicked);
+
+    toolbar_->addSeparator();
+
+    auto* actionAdvanced = toolbar_->addAction(QStringLiteral("🌐  Tunnel & Nâng cao"));
+    connect(actionAdvanced, &QAction::triggered, this, &MainWindow::OnOpenAdvancedSettingsClicked);
 
     toolbar_->addSeparator();
 
@@ -317,6 +348,23 @@ void MainWindow::HandleAppEvent(core::AppEvent event)
             // The corresponding console line and state change are handled
             // by the two cases above; nothing extra needed for the MVP.
             break;
+        case core::EventType::EulaRequired:
+            if (event.serverId == GetSelectedServerId())
+            {
+                const auto reply = QMessageBox::question(
+                    this,
+                    QStringLiteral("Cần chấp nhận Minecraft EULA"),
+                    QStringLiteral(
+                        "Server vừa dừng vì chưa chấp nhận Minecraft End User License Agreement:\n"
+                        "https://aka.ms/MinecraftEULA\n\n"
+                        "Bạn đã đọc và đồng ý (eula=true)?"),
+                    QMessageBox::Yes | QMessageBox::No);
+                if (reply == QMessageBox::Yes)
+                {
+                    AcceptEulaForCurrentServer();
+                }
+            }
+            break;
     }
 }
 
@@ -334,6 +382,47 @@ void MainWindow::OnAddServerClicked()
     }
     serverManager_->AddServer(*config, *configManager_);
     RefreshServerList();
+}
+
+void MainWindow::OnImportServerClicked()
+{
+    ImportServerDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+    auto config = dialog.GetResult();
+    if (!config.has_value())
+    {
+        return;
+    }
+    serverManager_->AddServer(*config, *configManager_);
+    RefreshServerList();
+}
+
+void MainWindow::OnOpenInstalledAddonsClicked()
+{
+    auto srv = serverManager_->Get(GetSelectedServerId());
+    if (!srv)
+    {
+        QMessageBox::information(this, QStringLiteral("Plugin/Mod đã cài"), QStringLiteral("Hãy chọn một server trước."));
+        return;
+    }
+    InstalledAddonsDialog dialog(srv->GetConfig(), this);
+    dialog.exec();
+}
+
+void MainWindow::OnOpenAdvancedSettingsClicked()
+{
+    auto srv = serverManager_->Get(GetSelectedServerId());
+    if (!srv)
+    {
+        QMessageBox::information(this, QStringLiteral("Cài đặt nâng cao"), QStringLiteral("Hãy chọn một server trước."));
+        return;
+    }
+    AdvancedSettingsDialog dialog(srv, serverManager_, configManager_, this);
+    dialog.exec();
+    RefreshServerList(); // in case a state-affecting change happened while the dialog was open
 }
 
 void MainWindow::OnRemoveServerClicked()
@@ -437,6 +526,93 @@ void MainWindow::OnOpenLibraryClicked()
     }
     LibraryDialog dialog(srv->GetConfig(), this);
     dialog.exec();
+}
+
+void MainWindow::OnOpenPropertiesClicked()
+{
+    auto srv = serverManager_->Get(GetSelectedServerId());
+    if (!srv)
+    {
+        QMessageBox::information(
+            this, QStringLiteral("server.properties"), QStringLiteral("Hãy chọn một server trước."));
+        return;
+    }
+    PropertiesDialog dialog(srv->GetConfig(), this);
+    dialog.exec();
+}
+
+void MainWindow::OnOpenPlayersClicked()
+{
+    auto srv = serverManager_->Get(GetSelectedServerId());
+    if (!srv)
+    {
+        QMessageBox::information(
+            this, QStringLiteral("Quản lý người chơi"), QStringLiteral("Hãy chọn một server trước."));
+        return;
+    }
+    if (srv->GetState() != core::ServerState::Running)
+    {
+        QMessageBox::information(
+            this,
+            QStringLiteral("Quản lý người chơi"),
+            QStringLiteral("Server cần đang chạy để gửi lệnh op/whitelist/kick/ban."));
+        return;
+    }
+    PlayersDialog dialog(srv, this);
+    dialog.exec();
+}
+
+void MainWindow::OnOpenBackupsClicked()
+{
+    auto srv = serverManager_->Get(GetSelectedServerId());
+    if (!srv)
+    {
+        QMessageBox::information(this, QStringLiteral("Backups"), QStringLiteral("Hãy chọn một server trước."));
+        return;
+    }
+    BackupsDialog dialog(srv->GetConfig(), this);
+    dialog.exec();
+}
+
+void MainWindow::OnAcceptEulaClicked()
+{
+    auto srv = serverManager_->Get(GetSelectedServerId());
+    if (!srv)
+    {
+        QMessageBox::information(this, QStringLiteral("EULA"), QStringLiteral("Hãy chọn một server trước."));
+        return;
+    }
+
+    const auto reply = QMessageBox::question(
+        this,
+        QStringLiteral("Minecraft EULA"),
+        QStringLiteral(
+            "Minecraft server yêu cầu bạn đọc và đồng ý với Minecraft End User License Agreement:\n"
+            "https://aka.ms/MinecraftEULA\n\n"
+            "Bạn có đồng ý không?"),
+        QMessageBox::Yes | QMessageBox::No);
+    if (reply == QMessageBox::Yes)
+    {
+        AcceptEulaForCurrentServer();
+    }
+}
+
+void MainWindow::AcceptEulaForCurrentServer()
+{
+    auto srv = serverManager_->Get(GetSelectedServerId());
+    if (!srv)
+    {
+        return;
+    }
+    if (srv->AcceptEula())
+    {
+        QMessageBox::information(
+            this, QStringLiteral("EULA"), QStringLiteral("Đã cập nhật eula.txt. Bạn có thể Start lại server."));
+    }
+    else
+    {
+        QMessageBox::warning(this, QStringLiteral("EULA"), QStringLiteral("Không ghi được eula.txt."));
+    }
 }
 
 void MainWindow::RefreshServerList()

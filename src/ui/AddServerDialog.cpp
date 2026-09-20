@@ -1,5 +1,7 @@
 #include "ui/AddServerDialog.hpp"
 
+#include "javamanager/JavaManager.hpp"
+
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -11,6 +13,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QStringList>
 #include <QVBoxLayout>
 
 namespace ui
@@ -53,6 +56,46 @@ AddServerDialog::AddServerDialog(QWidget* parent)
     form->addRow(QStringLiteral("Thư mục server:"), MakeBrowsableRow(this, editDirectory_, browseDirectoryButton));
     connect(browseDirectoryButton, &QPushButton::clicked, this, &AddServerDialog::OnBrowseDirectory);
 
+    // Phase 5 Server Providers: download a runnable server jar directly
+    // instead of requiring the user to already have one.
+    providerClient_ = new net::ServerProviderClient(this);
+
+    auto* providerRow = new QHBoxLayout();
+    providerRow->setSpacing(6);
+    comboProvider_ = new QComboBox(this);
+    comboProvider_->addItem(QStringLiteral("— Tự có file jar —"));
+    comboProvider_->addItem(QStringLiteral("Vanilla"));
+    comboProvider_->addItem(QStringLiteral("Paper"));
+    comboProvider_->addItem(QStringLiteral("Fabric"));
+    providerRow->addWidget(comboProvider_);
+
+    comboProviderVersion_ = new QComboBox(this);
+    comboProviderVersion_->setEnabled(false);
+    comboProviderVersion_->setMinimumWidth(110);
+    providerRow->addWidget(comboProviderVersion_, 1);
+
+    auto* refreshVersionsButton = new QPushButton(QStringLiteral("⟳"), this);
+    refreshVersionsButton->setObjectName(QStringLiteral("btnNeutral"));
+    refreshVersionsButton->setFixedWidth(32);
+    refreshVersionsButton->setToolTip(QStringLiteral("Tải lại danh sách phiên bản"));
+    providerRow->addWidget(refreshVersionsButton);
+
+    buttonDownloadJar_ = new QPushButton(QStringLiteral("⬇ Tải"), this);
+    buttonDownloadJar_->setObjectName(QStringLiteral("btnSend"));
+    buttonDownloadJar_->setEnabled(false);
+    providerRow->addWidget(buttonDownloadJar_);
+
+    form->addRow(QStringLiteral("Tải server tự động:"), providerRow);
+
+    labelProviderStatus_ = new QLabel(this);
+    labelProviderStatus_->setObjectName(QStringLiteral("hintLabel"));
+    labelProviderStatus_->setWordWrap(true);
+    form->addRow(QString(), labelProviderStatus_);
+
+    connect(comboProvider_, &QComboBox::currentIndexChanged, this, &AddServerDialog::OnProviderChanged);
+    connect(refreshVersionsButton, &QPushButton::clicked, this, &AddServerDialog::OnRefreshVersionsClicked);
+    connect(buttonDownloadJar_, &QPushButton::clicked, this, &AddServerDialog::OnDownloadJarClicked);
+
     editJar_ = new QLineEdit(this);
     editJar_->setText(QStringLiteral("server.jar"));
     QPushButton* browseJarButton = nullptr;
@@ -64,6 +107,28 @@ AddServerDialog::AddServerDialog(QWidget* parent)
     QPushButton* browseJavaButton = nullptr;
     form->addRow(QStringLiteral("Đường dẫn java.exe:"), MakeBrowsableRow(this, editJavaPath_, browseJavaButton));
     connect(browseJavaButton, &QPushButton::clicked, this, &AddServerDialog::OnBrowseJavaPath);
+
+    // Phase 3 Java Manager: offer a quick-pick of Java installs this app
+    // could find on this machine, so most people never need Browse at all.
+    auto* comboDetectedJava = new QComboBox(this);
+    comboDetectedJava->addItem(QStringLiteral("— Chọn Java đã phát hiện —"));
+    for (const auto& install : javamanager::DetectInstallations())
+    {
+        comboDetectedJava->addItem(QString::fromStdWString(install.path.wstring()));
+    }
+    comboDetectedJava->setEnabled(comboDetectedJava->count() > 1);
+    if (!comboDetectedJava->isEnabled())
+    {
+        comboDetectedJava->setToolTip(QStringLiteral("Không tự phát hiện được Java nào - hãy dùng nút \"...\" ở trên."));
+    }
+    form->addRow(QStringLiteral("Java đã cài (tự phát hiện):"), comboDetectedJava);
+    connect(comboDetectedJava, &QComboBox::currentTextChanged, this, [this, comboDetectedJava](const QString&) {
+        if (comboDetectedJava->currentIndex() <= 0)
+        {
+            return;
+        }
+        editJavaPath_->setText(comboDetectedJava->currentText());
+    });
 
     comboServerType_ = new QComboBox(this);
     comboServerType_->addItems({
@@ -116,7 +181,7 @@ AddServerDialog::AddServerDialog(QWidget* parent)
     layout->addWidget(labelError_);
     layout->addWidget(buttons);
 
-    resize(480, 400);
+    resize(500, 500);
 }
 
 void AddServerDialog::OnBrowseDirectory()
@@ -161,6 +226,112 @@ void AddServerDialog::OnBrowseJavaPath()
     {
         editJavaPath_->setText(QDir::toNativeSeparators(chosen));
     }
+}
+
+net::ServerProviderType AddServerDialog::CurrentProviderType() const
+{
+    switch (comboProvider_->currentIndex())
+    {
+        case 1: return net::ServerProviderType::Vanilla;
+        case 2: return net::ServerProviderType::Paper;
+        case 3: return net::ServerProviderType::Fabric;
+        default: return net::ServerProviderType::Vanilla; // unreachable while index 0 disables the version combo
+    }
+}
+
+void AddServerDialog::OnProviderChanged()
+{
+    const bool manual = comboProvider_->currentIndex() == 0;
+    comboProviderVersion_->setEnabled(!manual);
+    buttonDownloadJar_->setEnabled(false);
+    comboProviderVersion_->clear();
+    labelProviderStatus_->setText(QString());
+
+    if (!manual)
+    {
+        LoadVersionsForCurrentProvider();
+    }
+}
+
+void AddServerDialog::OnRefreshVersionsClicked()
+{
+    if (comboProvider_->currentIndex() != 0)
+    {
+        LoadVersionsForCurrentProvider();
+    }
+}
+
+void AddServerDialog::LoadVersionsForCurrentProvider()
+{
+    const net::ServerProviderType type = CurrentProviderType();
+    comboProviderVersion_->clear();
+    buttonDownloadJar_->setEnabled(false);
+    labelProviderStatus_->setText(QStringLiteral("Đang tải danh sách phiên bản..."));
+
+    providerClient_->ListVersions(type, [this](QStringList versions, QString error) {
+        if (!error.isEmpty())
+        {
+            labelProviderStatus_->setText(QStringLiteral("Lỗi: %1").arg(error));
+            return;
+        }
+        if (versions.isEmpty())
+        {
+            labelProviderStatus_->setText(QStringLiteral("Không tìm thấy phiên bản nào."));
+            return;
+        }
+        comboProviderVersion_->addItems(versions);
+        buttonDownloadJar_->setEnabled(true);
+        labelProviderStatus_->setText(QStringLiteral("Chọn phiên bản rồi bấm \"⬇ Tải\"."));
+    });
+}
+
+void AddServerDialog::OnDownloadJarClicked()
+{
+    const QString directory = editDirectory_->text().trimmed();
+    if (directory.isEmpty())
+    {
+        labelProviderStatus_->setText(QStringLiteral("Điền \"Thư mục server\" trước khi tải."));
+        return;
+    }
+    const QString version = comboProviderVersion_->currentText();
+    if (version.isEmpty())
+    {
+        return;
+    }
+
+    const net::ServerProviderType type = CurrentProviderType();
+    buttonDownloadJar_->setEnabled(false);
+    comboProvider_->setEnabled(false);
+    comboProviderVersion_->setEnabled(false);
+    labelProviderStatus_->setText(QStringLiteral("Đang lấy thông tin tải xuống..."));
+
+    providerClient_->ResolveServerJar(type, version, [this, directory](std::optional<net::ServerJarInfo> info, QString error) {
+        if (!info.has_value())
+        {
+            labelProviderStatus_->setText(QStringLiteral("Lỗi: %1").arg(error));
+            buttonDownloadJar_->setEnabled(true);
+            comboProvider_->setEnabled(true);
+            comboProviderVersion_->setEnabled(true);
+            return;
+        }
+
+        const QString destinationPath = directory + QStringLiteral("/") + info->filename;
+        labelProviderStatus_->setText(QStringLiteral("Đang tải %1...").arg(info->filename));
+
+        providerClient_->DownloadFile(info->downloadUrl, destinationPath, [this, info](bool success, QString downloadError) {
+            buttonDownloadJar_->setEnabled(true);
+            comboProvider_->setEnabled(true);
+            comboProviderVersion_->setEnabled(true);
+
+            if (!success)
+            {
+                labelProviderStatus_->setText(QStringLiteral("Lỗi tải file: %1").arg(downloadError));
+                return;
+            }
+            editJar_->setText(info->filename);
+            labelProviderStatus_->setText(QStringLiteral("Đã tải %1 xong.").arg(info->filename));
+        });
+    });
 }
 
 void AddServerDialog::OnSaveClicked()
