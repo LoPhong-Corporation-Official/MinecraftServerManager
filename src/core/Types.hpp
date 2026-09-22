@@ -135,6 +135,7 @@ struct ServerConfig
 
     bool autoRestart = false;
     bool autoBackup = false;
+    bool autoStartOnAppLaunch = false; // start this server automatically when the app itself starts
 
     // Phase 6: an optional companion process (Playit.gg agent, Cloudflare
     // Tunnel's cloudflared, or any other executable) managed alongside the

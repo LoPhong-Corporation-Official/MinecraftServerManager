@@ -4,10 +4,12 @@ Triển khai theo bản đặc tả kỹ thuật (`Minecraft_Server_Manager___Te
 UI dùng **Qt6 Widgets** theo yêu cầu; **lớp quản lý tiến trình Minecraft vẫn giữ nguyên Win32 API
 gốc** (CreateProcessW, Job Object, pipe...) như spec yêu cầu — Qt chỉ thay thế phần hiển thị.
 
-Tiến độ: **Phase 1-5 đầy đủ/phần lớn** (chi tiết bên dưới), **Phase 6 (Network Tunnel)** —
-quản lý vòng đời tiến trình Playit.gg/Cloudflare Tunnel, cộng thêm vài tính năng lấy cảm hứng từ
-[Fork](https://github.com/ForkGG/Fork): Import Server có sẵn, xem/xoá plugin-mod đã cài, tự
-restart định kỳ có cảnh báo trong game. Chưa làm: firewall rule tự động, Discord bot.
+Tiến độ: **Phase 1-6 đều đã có** (Phase 4 giờ có cả Restore backup, an toàn — di chuyển world cũ
+thay vì xoá), cộng thêm tính năng lấy cảm hứng từ [Fork](https://github.com/ForkGG/Fork) (Import
+Server có sẵn, xem/xoá plugin-mod đã cài, tự restart định kỳ có cảnh báo trong game), và mới nhất:
+**tự khởi động cùng Windows** (chế độ Normal/Silent + tray icon), **tự Start server khi mở app**,
+cùng vài **cải thiện hiệu năng**. Chi tiết từng phần bên dưới. Chưa làm: firewall rule tự động,
+Discord bot, MSPT thật.
 
 ## Tính năng theo phase
 
@@ -52,7 +54,12 @@ restart định kỳ có cảnh báo trong game. Chưa làm: firewall rule tự 
   không load cả file vào RAM nên an toàn với world nhiều GB.
 - **Retention**: tự giữ lại `kMaxBackupsToKeep` = 10 bản mới nhất, bản cũ hơn tự xoá.
 - Dialog `💾 Backups`: tạo (chạy nền, không đứng UI), xoá, và "📂 Mở thư mục backups".
-- **Restore chưa làm** — xem mục Giới hạn bên dưới, lý do là an toàn dữ liệu.
+- **Restore** (`⭯` trong dialog Backups): giải nén ngược lại vào thư mục server. Yêu cầu server
+  đang **Stopped** (kiểm tra thật với trạng thái sống, không phải chỉ đọc config). An toàn theo
+  thiết kế: world hiện tại (nếu có) được **di chuyển** (không xoá) sang
+  `backups/pre-restore-<thời điểm>/` trước khi ghi đè gì cả — chọn nhầm bản backup hay lỡ tay vẫn
+  lấy lại được. Tự viết `backup::ZipReader` đọc lại đúng định dạng của `ZipWriter` (chỉ đảm bảo
+  đọc được zip do chính app này tạo, không phải unzip tổng quát).
 
 ### Phase 5 — Server Providers
 - Trong dialog "Thêm Server", mục **"Tải server tự động"**: chọn Vanilla/Paper/Fabric → chọn
@@ -60,8 +67,10 @@ restart định kỳ có cảnh báo trong game. Chưa làm: firewall rule tự 
   điền vào ô "Tên file jar". Không cần tự đi tìm/tải file jar ở đâu nữa.
   - **Vanilla**: `piston-meta.mojang.com/mc/game/version_manifest_v2.json` (chỉ liệt kê bản
     `release`, không hiện snapshot) → `downloads.server.url` của từng phiên bản.
-  - **Paper**: `api.papermc.io/v2/projects/paper` (danh sách version) → `.../builds` (lọc
-    `channel == "default"`, lấy build mới nhất) → tải `paper-{version}-{build}.jar`.
+  - **Paper**: ~~`api.papermc.io/v2/projects/paper`~~ → PaperMC đã khai tử API v2 (trả về HTTP
+    410 Gone từ khoảng cuối 2025), chuyển sang API mới **"Fill"** tại `fill.papermc.io/v3`. Đã
+    cập nhật: `/v3/projects/paper` (version group), `/v3/projects/paper/versions/{v}/builds`
+    (mảng JSON phẳng, lọc `channel == "STABLE"`, lấy `downloads."server:default".url`).
   - **Fabric**: `meta.fabricmc.net/v2/versions/game` (chỉ bản `stable`) → lấy loader mới nhất
     tương thích (`/versions/loader/{version}`) + installer mới nhất (`/versions/installer`) → tải
     thẳng file server launcher tự-bootstrap ở endpoint `.../server/jar` (file này tự tải thêm
@@ -86,6 +95,24 @@ cho phép:
 - Tuỳ chọn tự khởi động tunnel cùng lúc Start server; tunnel cũng tự dừng khi server dừng.
 - Nút Start/Stop tunnel thủ công ngay trong dialog, độc lập với server (test tunnel mà không cần
   chạy Minecraft).
+
+### Tự khởi động cùng Windows + chế độ Normal/Silent + hiệu năng
+- **🚀 Cài đặt ứng dụng** (toolbar): bật "Khởi động cùng Windows" — ghi vào Registry Run key của
+  user hiện tại (`HKCU\...\Run`, không cần quyền admin), kèm chọn chạy **Normal** (mở cửa sổ như
+  bình thường) hay **Silent** (chạy ẩn, chỉ còn icon khay hệ thống — thêm cờ `--silent` vào lệnh
+  khởi động).
+- Mỗi server có checkbox riêng **"Tự động Start server này khi mở app"** (trong `🌐 Tunnel & Nâng
+  cao`) — kết hợp với "Khởi động cùng Windows" là thành "server tự chạy ngay khi bật máy", không
+  cần đăng nhập rồi tự tay mở app + bấm Start.
+- **Tray icon**: đóng cửa sổ (nút X) giờ **ẩn xuống khay** thay vì thoát hẳn — server đang chạy
+  vẫn tiếp tục chạy. Nhấp đúp hoặc chọn "Hiện cửa sổ" trong menu chuột phải để mở lại; "Thoát"
+  trong menu đó mới thực sự đóng ứng dụng (và dừng các server đang chạy).
+- **Hiệu năng**: trước đây mỗi lần BẤT KỲ server nào đổi trạng thái (Starting/Running/Stopping...)
+  đều xoá sạch và dựng lại toàn bộ danh sách server trong UI. Giờ chỉ cập nhật đúng 1 dòng bị ảnh
+  hưởng (`MainWindow::UpdateServerListItem`, tra theo `QMap<serverId, QListWidgetItem*>`), và chỉ
+  tính lại trạng thái nút bấm (Start/Stop/Restart...) khi đúng server đang thay đổi là server đang
+  được chọn — rõ rệt hơn khi quản lý nhiều server cùng lúc vì tần suất đổi trạng thái tăng theo số
+  server. Danh sách chỉ rebuild toàn bộ khi có thay đổi cấu trúc thật sự (thêm/xoá/import server).
 
 ### Từ repo Fork (ForkGG/Fork) — đã thêm
 - **📥 Import Server**: trỏ vào thư mục server có sẵn (đã có file .jar từ trước, có thể do tự
@@ -158,15 +185,16 @@ vài dòng đầu) để mình vá đúng chỗ.
    **📜 Chấp nhận EULA** trên toolbar bất cứ lúc nào.
 7. Đã có sẵn 1 server ở đâu đó (không cần tạo mới) → **📥 Import Server**, trỏ vào thư mục đó.
 8. Muốn public server qua Playit.gg/Cloudflare Tunnel, hoặc tự restart định kỳ → **🌐 Tunnel &
-   Nâng cao**.
+   Nâng cao** (mục này cũng có "Tự động Start server khi mở app").
+9. Muốn máy tự chạy server ngay khi bật lên, không cần tự mở app → **🚀 Cài đặt ứng dụng**, bật
+   "Khởi động cùng Windows" (chọn Silent nếu không muốn cửa sổ tự bật lên mỗi lần khởi động máy).
+10. Đóng cửa sổ (nút X) giờ chỉ ẩn xuống khay hệ thống, server vẫn chạy — bấm phải vào icon khay
+    → "Thoát" mới thực sự đóng app.
 
 ## Không nằm trong bản này
 
 - **MSPT thật** — xem Phase 2.
 - **Java Manager đọc Registry / probe version** — xem Phase 3.
-- **Restore backup tự động** — xem Phase 4; hiện dùng "📂 Mở thư mục backups" rồi tự giải nén
-  bằng Windows Explorer (dừng server trước, xoá/đổi tên thư mục world cũ, giải nén bản backup
-  vào đúng chỗ).
 - **Cài modpack tự động** (giải nén `.mrpack`, tải dependency, áp overrides) — Thư viện Modrinth
   hiện chỉ tải file `.mrpack` về.
 - **Forge/NeoForge auto-download** — xem Phase 5, lý do kỹ thuật (installer tương tác, không
@@ -188,12 +216,15 @@ vài dòng đầu) để mình vá đúng chỗ.
 
 ## Giới hạn kỹ thuật đã biết (có chủ đích, không phải bug bỏ sót)
 
-- **Vì sao restore chưa làm**: extract-tại-chỗ mà lỡ giữa chừng (mất điện, hết dung lượng đĩa...)
-  có thể phá luôn world hiện tại mà không còn đường lùi. Làm đúng cần: dừng server, di chuyển
-  world hiện tại sang thư mục an toàn trước khi ghi đè, xác minh archive trước khi động vào bất
-  cứ file nào — nhiều bước hơn để làm đúng và an toàn so với create/list/delete, nên để dành.
-- `ZipWriter` chỉ hỗ trợ STORE (không nén) và không hỗ trợ ZIP64 (không backup được 1 file nào đó
-  > 4 GB — bản thân từng file trong world Minecraft hiếm khi to vậy, region file thường vài MB).
+- **Restore đã làm nhưng có giới hạn**: `ZipReader` chỉ đảm bảo đọc đúng file zip do chính
+  `ZipWriter` của app này tạo ra (giả định EOCD nằm ở đúng 22 byte cuối, không có comment) — không
+  phải bộ giải nén tổng quát, đừng dùng để mở zip tải từ nơi khác. Nếu quá trình giải nén lỗi giữa
+  chừng (hết dung lượng đĩa, mất điện...), world cũ vẫn an toàn trong thư mục
+  `backups/pre-restore-<thời điểm>/` vì đã được di chuyển sang đó **trước** khi ghi đè — nhưng
+  world mới có thể bị dở dang, cần restore lại lần nữa hoặc tự khôi phục thủ công từ thư mục đó.
+- `ZipWriter`/`ZipReader` chỉ hỗ trợ STORE (không nén) và không hỗ trợ ZIP64 (không backup được 1
+  file nào đó > 4 GB — bản thân từng file trong world Minecraft hiếm khi to vậy, region file
+  thường vài MB).
 - `core::EventDispatcher` chưa có `Unsubscribe()`. Mọi server đang chạy được `Stop()` trước khi
   `MainWindow` bị hủy khi thoát app bình thường nên không có thread nền nào gọi `Publish()` sau
   khi `MainWindow` đã bị hủy trong trường hợp thông thường; có một khoảng hẹp giữa lúc đóng cửa
@@ -214,12 +245,14 @@ src/
   console/        ConsoleBuffer, ConsoleController - đọc pipe trên thread riêng
   javamanager/    JavaManager - dò Java cài sẵn (Phase 3)
   backup/         ZipWriter, BackupManager (Phase 4)
+  platform/       StartupManager - bật/tắt khởi động cùng Windows (Registry Run key)
   server/         MinecraftServer (state machine + EULA + tunnel + scheduled restart),
                   ServerManager, ServerImporter (Fork-inspired import)
   config/         ConfigManager (data/servers.json), ServerProperties (server.properties)
   net/            ModrinthClient (mod/plugin/modpack), ServerProviderClient (Phase 5: tải
                   server.jar Vanilla/Paper/Fabric)
-  ui/             MainWindow, AddServerDialog, ImportServerDialog, PropertiesDialog,
-                  PlayersDialog, BackupsDialog, InstalledAddonsDialog, AdvancedSettingsDialog
-                  (tunnel + scheduled restart), LibraryDialog
+  ui/             MainWindow (+ tray icon, closeEvent ẩn xuống khay), AddServerDialog,
+                  ImportServerDialog, PropertiesDialog, PlayersDialog, BackupsDialog,
+                  InstalledAddonsDialog, AdvancedSettingsDialog (tunnel + scheduled restart +
+                  auto-start-with-app), AppSettingsDialog (khởi động cùng Windows), LibraryDialog
 ```

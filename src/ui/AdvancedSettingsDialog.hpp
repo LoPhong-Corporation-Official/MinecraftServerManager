@@ -11,6 +11,7 @@
 #include <QDialog>
 
 #include <memory>
+#include <thread>
 
 class QLineEdit;
 class QComboBox;
@@ -32,6 +33,7 @@ public:
         std::shared_ptr<server::ServerManager> serverManager,
         std::shared_ptr<config::ConfigManager> configManager,
         QWidget* parent = nullptr);
+    ~AdvancedSettingsDialog() override;
 
 private slots:
     void OnPresetChanged();
@@ -42,6 +44,7 @@ private slots:
 
 private:
     void RefreshTunnelStatus();
+    void SetTunnelButtonsEnabled(bool enabled);
 
     std::shared_ptr<server::MinecraftServer> server_;
     std::shared_ptr<server::ServerManager> serverManager_;
@@ -59,8 +62,19 @@ private:
 
     QCheckBox* checkScheduledRestartEnabled_ = nullptr;
     QSpinBox* spinRestartIntervalHours_ = nullptr;
+    QCheckBox* checkAutoStartWithApp_ = nullptr;
 
     QLabel* labelSaveStatus_ = nullptr;
+
+    // Starting/stopping the tunnel process happens off the UI thread (the
+    // same reasoning as everywhere else in this app: never risk blocking
+    // the window on a CreateProcessW/TerminateProcess call). Joinable
+    // members rather than detached threads, so the destructor can
+    // guarantee neither is still calling QMetaObject::invokeMethod(this,
+    // ...) once this dialog's widgets start being torn down - same
+    // pattern as ui::BackupsDialog.
+    std::jthread tunnelStartThread_;
+    std::jthread tunnelStopThread_;
 };
 
 } // namespace ui

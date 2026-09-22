@@ -17,7 +17,7 @@ namespace net
 {
 namespace
 {
-constexpr const char* kUserAgent = "MinecraftServerManager/1.0 (desktop app)";
+constexpr const char* kUserAgent = "MinecraftServerManager/1.0 (+https://github.com/minecraft-server-manager/desktop-app)";
 
 void Get(QNetworkAccessManager* manager, const QUrl& url, std::function<void(QNetworkReply*)> onFinished)
 {
@@ -93,23 +93,38 @@ void ServerProviderClient::ListVersions(ServerProviderType type, std::function<v
         }
         case ServerProviderType::Paper:
         {
+            // PaperMC retired the old api.papermc.io/v2 API (it now
+            // returns HTTP 410 Gone) in favour of the new "Fill" API at
+            // fill.papermc.io/v3. Versions come back grouped by version
+            // family: {"versions": {"1.21": ["1.21.9","1.21.10",...], ...}}.
+            // Groups are newest-first and each group's own array is
+            // newest-first too (per PaperMC's own example script), so
+            // concatenating every group's array in encounter order keeps
+            // the overall flattened list newest-first.
             GetJson(
                 manager_,
-                QUrl(QStringLiteral("https://api.papermc.io/v2/projects/paper")),
+                QUrl(QStringLiteral("https://fill.papermc.io/v3/projects/paper")),
                 [onResult](QJsonDocument doc, QString error) {
                     if (!error.isEmpty())
                     {
                         onResult({}, error);
                         return;
                     }
-                    QStringList versions;
-                    for (const auto& v : doc.object().value(QStringLiteral("versions")).toArray())
+                    const QJsonObject root = doc.object();
+                    if (root.contains(QStringLiteral("ok")) && !root.value(QStringLiteral("ok")).toBool(true))
                     {
-                        versions << v.toString();
+                        onResult({}, root.value(QStringLiteral("message")).toString(QStringLiteral("Lỗi không rõ từ PaperMC.")));
+                        return;
                     }
-                    // Paper's API returns versions oldest-first; reverse so
-                    // the newest (most likely to be picked) shows first.
-                    std::reverse(versions.begin(), versions.end());
+                    QStringList versions;
+                    const QJsonObject versionGroups = root.value(QStringLiteral("versions")).toObject();
+                    for (auto it = versionGroups.constBegin(); it != versionGroups.constEnd(); ++it)
+                    {
+                        for (const auto& v : it.value().toArray())
+                        {
+                            versions << v.toString();
+                        }
+                    }
                     onResult(versions, QString());
                 });
             return;
@@ -179,35 +194,46 @@ void ServerProviderClient::ResolveServerJar(
         }
         case ServerProviderType::Paper:
         {
-            const QUrl buildsUrl(QStringLiteral("https://api.papermc.io/v2/projects/paper/versions/%1/builds").arg(version));
-            GetJson(manager_, buildsUrl, [onResult, version](QJsonDocument doc, QString error) {
+            // Fill's builds endpoint returns a plain JSON array (not
+            // wrapped in a "builds" key like the old v2 API), newest
+            // build first, each with a "downloads" map keyed by
+            // "server:default" for the runnable server jar.
+            const QUrl buildsUrl(QStringLiteral("https://fill.papermc.io/v3/projects/paper/versions/%1/builds").arg(version));
+            GetJson(manager_, buildsUrl, [onResult](QJsonDocument doc, QString error) {
                 if (!error.isEmpty())
                 {
                     onResult(std::nullopt, error);
                     return;
                 }
-                int latestBuild = -1;
-                for (const auto& b : doc.object().value(QStringLiteral("builds")).toArray())
+                if (!doc.isArray())
                 {
-                    const QJsonObject o = b.toObject();
-                    if (o.value(QStringLiteral("channel")).toString() != QStringLiteral("default"))
-                    {
-                        continue; // skip experimental builds
-                    }
-                    latestBuild = std::max(latestBuild, o.value(QStringLiteral("build")).toInt());
-                }
-                if (latestBuild < 0)
-                {
-                    onResult(std::nullopt, QStringLiteral("Không tìm thấy bản build ổn định nào cho phiên bản này."));
+                    // An unknown/invalid version returns {"ok": false, "message": "..."} instead of an array.
+                    const QString message = doc.object().value(QStringLiteral("message"))
+                        .toString(QStringLiteral("Không tìm thấy build nào cho phiên bản này."));
+                    onResult(std::nullopt, message);
                     return;
                 }
-                ServerJarInfo info;
-                info.filename = QStringLiteral("paper-%1-%2.jar").arg(version).arg(latestBuild);
-                info.downloadUrl = QStringLiteral("https://api.papermc.io/v2/projects/paper/versions/%1/builds/%2/downloads/%3")
-                                        .arg(version)
-                                        .arg(latestBuild)
-                                        .arg(info.filename);
-                onResult(info, QString());
+                for (const auto& b : doc.array())
+                {
+                    const QJsonObject build = b.toObject();
+                    if (build.value(QStringLiteral("channel")).toString() != QStringLiteral("STABLE"))
+                    {
+                        continue; // skip EXPERIMENTAL builds - only ever serve stable ones automatically
+                    }
+                    const QJsonObject download =
+                        build.value(QStringLiteral("downloads")).toObject().value(QStringLiteral("server:default")).toObject();
+                    const QString url = download.value(QStringLiteral("url")).toString();
+                    if (url.isEmpty())
+                    {
+                        continue;
+                    }
+                    ServerJarInfo info;
+                    info.filename = download.value(QStringLiteral("name")).toString();
+                    info.downloadUrl = url;
+                    onResult(info, QString());
+                    return;
+                }
+                onResult(std::nullopt, QStringLiteral("Không tìm thấy bản STABLE nào cho phiên bản này."));
             });
             return;
         }

@@ -33,6 +33,7 @@ include(cmake/CompilerOptions.cmake)
 set(Qt6_DIR
     "C:/Qt/6.11.2/msvc2022_64/lib/cmake/Qt6"
 )
+
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
 
 add_executable(MinecraftServerManager WIN32
@@ -65,6 +66,8 @@ add_executable(MinecraftServerManager WIN32
 
     src/backup/ZipWriter.hpp
     src/backup/ZipWriter.cpp
+    src/backup/ZipReader.hpp
+    src/backup/ZipReader.cpp
     src/backup/BackupManager.hpp
     src/backup/BackupManager.cpp
 
@@ -89,6 +92,9 @@ add_executable(MinecraftServerManager WIN32
     src/net/ServerProviderClient.hpp
     src/net/ServerProviderClient.cpp
 
+    src/platform/StartupManager.hpp
+    src/platform/StartupManager.cpp
+
     src/ui/MainWindow.hpp
     src/ui/MainWindow.cpp
     src/ui/AddServerDialog.hpp
@@ -107,6 +113,8 @@ add_executable(MinecraftServerManager WIN32
     src/ui/InstalledAddonsDialog.cpp
     src/ui/AdvancedSettingsDialog.hpp
     src/ui/AdvancedSettingsDialog.cpp
+    src/ui/AppSettingsDialog.hpp
+    src/ui/AppSettingsDialog.cpp
 )
 
 target_include_directories(MinecraftServerManager PRIVATE src)

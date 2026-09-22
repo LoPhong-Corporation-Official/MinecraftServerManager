@@ -6,6 +6,8 @@
 #include <QStyleFactory>
 
 #include <chrono>
+#include <string_view>
+#include <thread>
 
 namespace app
 {
@@ -211,11 +213,31 @@ int Application::Run(int argc, char** argv)
 {
     QApplication qtApp(argc, argv);
     QApplication::setApplicationName("Minecraft Server Manager");
+    // Keeps the app (and its running servers) alive with only the tray
+    // icon left when the main window is closed/hidden - otherwise Qt
+    // would quit the whole process as soon as the last visible window
+    // closes, which defeats the point of "Silent" startup mode / minimize
+    // to tray.
+    QApplication::setQuitOnLastWindowClosed(false);
     // Fusion renders custom QSS colours consistently across Windows
     // versions; the native "windowsvista" style ignores several of the
     // rules above (list/scrollbar colours in particular).
     QApplication::setStyle(QStyleFactory::create("Fusion"));
     qtApp.setStyleSheet(QString::fromUtf8(kStyleSheet));
+
+    // "Silent" startup mode: no visible window at launch, just the tray
+    // icon - meant for "start with Windows" (see platform::StartupManager)
+    // so the app doesn't pop a window in the user's face on every login.
+    // The window can still be opened anytime from the tray icon.
+    bool silent = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string_view arg = argv[i];
+        if (arg == "--silent" || arg == "-silent")
+        {
+            silent = true;
+        }
+    }
 
     events_ = std::make_shared<core::EventDispatcher>();
     configManager_ = std::make_shared<config::ConfigManager>();
@@ -223,7 +245,12 @@ int Application::Run(int argc, char** argv)
     serverManager_->LoadFromConfig(*configManager_);
 
     mainWindow_ = std::make_unique<ui::MainWindow>(serverManager_, configManager_, events_);
-    mainWindow_->show();
+    if (!silent)
+    {
+        mainWindow_->show();
+    }
+
+    AutoStartFlaggedServers();
 
     const int exitCode = qtApp.exec();
 
@@ -237,6 +264,20 @@ int Application::Run(int argc, char** argv)
     ShutdownServers();
 
     return exitCode;
+}
+
+void Application::AutoStartFlaggedServers()
+{
+    // Off the UI thread, same reasoning as MainWindow's own Start button:
+    // CreateProcessW is normally fast but should never risk stalling
+    // startup (antivirus scanning java.exe, a slow disk, etc.).
+    for (const auto& srv : serverManager_->GetAll())
+    {
+        if (srv->GetConfig().autoStartOnAppLaunch)
+        {
+            std::thread([srv]() { srv->Start(); }).detach();
+        }
+    }
 }
 
 void Application::ShutdownServers()

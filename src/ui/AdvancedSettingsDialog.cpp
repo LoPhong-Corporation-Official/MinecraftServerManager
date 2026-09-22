@@ -9,6 +9,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMetaObject>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
@@ -108,6 +109,23 @@ AdvancedSettingsDialog::AdvancedSettingsDialog(
 
     layout->addWidget(restartGroup);
 
+    // --- Startup group ------------------------------------------------
+    auto* startupGroup = new QGroupBox(QStringLiteral("Khởi động"), this);
+    auto* startupForm = new QFormLayout(startupGroup);
+
+    checkAutoStartWithApp_ = new QCheckBox(QStringLiteral("Tự động Start server này khi mở app"), startupGroup);
+    startupForm->addRow(QString(), checkAutoStartWithApp_);
+
+    auto* startupHint = new QLabel(
+        QStringLiteral("Kết hợp với \"Khởi động cùng Windows\" (🚀 Cài đặt ứng dụng ở toolbar chính) để server này "
+                        "tự chạy ngay khi bật máy, không cần mở tay."),
+        startupGroup);
+    startupHint->setObjectName(QStringLiteral("hintLabel"));
+    startupHint->setWordWrap(true);
+    startupForm->addRow(QString(), startupHint);
+
+    layout->addWidget(startupGroup);
+
     labelSaveStatus_ = new QLabel(this);
     labelSaveStatus_->setObjectName(QStringLiteral("hintLabel"));
     layout->addWidget(labelSaveStatus_);
@@ -131,9 +149,19 @@ AdvancedSettingsDialog::AdvancedSettingsDialog(
     checkTunnelAutoStart_->setChecked(config.tunnel.autoStartWithServer);
     checkScheduledRestartEnabled_->setChecked(config.scheduledRestart.enabled);
     spinRestartIntervalHours_->setValue(config.scheduledRestart.intervalHours > 0 ? config.scheduledRestart.intervalHours : 24);
+    checkAutoStartWithApp_->setChecked(config.autoStartOnAppLaunch);
 
     OnPresetChanged();
     RefreshTunnelStatus();
+}
+
+AdvancedSettingsDialog::~AdvancedSettingsDialog()
+{
+    // tunnelStartThread_/tunnelStopThread_'s own std::jthread destructors
+    // request a stop and join automatically - this just blocks here until
+    // any in-flight start/stop finishes, guaranteeing neither can still
+    // be calling QMetaObject::invokeMethod(this, ...) once this dialog's
+    // widgets start being torn down. Same reasoning as ui::BackupsDialog.
 }
 
 void AdvancedSettingsDialog::OnPresetChanged()
@@ -173,18 +201,49 @@ void AdvancedSettingsDialog::RefreshTunnelStatus()
         : QStringLiteral("Trạng thái: đã dừng"));
 }
 
+void AdvancedSettingsDialog::SetTunnelButtonsEnabled(bool enabled)
+{
+    buttonStartTunnel_->setEnabled(enabled);
+    buttonStopTunnel_->setEnabled(enabled);
+}
+
 void AdvancedSettingsDialog::OnStartTunnelClicked()
 {
-    auto srv = server_;
-    std::thread([srv]() { srv->StartTunnel(); }).detach();
+    SetTunnelButtonsEnabled(false);
     labelTunnelStatus_->setText(QStringLiteral("Đang khởi động..."));
+
+    auto srv = server_;
+    tunnelStartThread_ = std::jthread([this, srv](std::stop_token) {
+        srv->StartTunnel();
+        // Hop back to the UI thread to reflect the real outcome - without
+        // this, the label above is the last thing ever shown, even once
+        // the process is actually up and running (or failed to start).
+        QMetaObject::invokeMethod(
+            this,
+            [this]() {
+                SetTunnelButtonsEnabled(true);
+                RefreshTunnelStatus();
+            },
+            Qt::QueuedConnection);
+    });
 }
 
 void AdvancedSettingsDialog::OnStopTunnelClicked()
 {
-    auto srv = server_;
-    std::thread([srv]() { srv->StopTunnel(); }).detach();
+    SetTunnelButtonsEnabled(false);
     labelTunnelStatus_->setText(QStringLiteral("Đang dừng..."));
+
+    auto srv = server_;
+    tunnelStopThread_ = std::jthread([this, srv](std::stop_token) {
+        srv->StopTunnel();
+        QMetaObject::invokeMethod(
+            this,
+            [this]() {
+                SetTunnelButtonsEnabled(true);
+                RefreshTunnelStatus();
+            },
+            Qt::QueuedConnection);
+    });
 }
 
 void AdvancedSettingsDialog::OnSaveClicked()
@@ -196,6 +255,7 @@ void AdvancedSettingsDialog::OnSaveClicked()
     config.tunnel.autoStartWithServer = checkTunnelAutoStart_->isChecked();
     config.scheduledRestart.enabled = checkScheduledRestartEnabled_->isChecked();
     config.scheduledRestart.intervalHours = spinRestartIntervalHours_->value();
+    config.autoStartOnAppLaunch = checkAutoStartWithApp_->isChecked();
 
     server_->UpdateConfig(config);
     serverManager_->SaveAll(*configManager_);

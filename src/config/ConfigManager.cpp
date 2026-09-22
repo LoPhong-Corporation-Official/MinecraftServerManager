@@ -69,6 +69,7 @@ core::json::JsonValue ToJson(const core::ServerConfig& server)
     obj.Set(L"port", JsonValue::MakeNumber(static_cast<double>(server.port)));
     obj.Set(L"autoRestart", JsonValue::MakeBool(server.autoRestart));
     obj.Set(L"autoBackup", JsonValue::MakeBool(server.autoBackup));
+    obj.Set(L"autoStartOnAppLaunch", JsonValue::MakeBool(server.autoStartOnAppLaunch));
 
     JsonValue tunnel = JsonValue::MakeObject();
     tunnel.Set(L"enabled", JsonValue::MakeBool(server.tunnel.enabled));
@@ -100,6 +101,7 @@ core::ServerConfig FromJson(const core::json::JsonValue& obj)
     if (const auto* v = obj.Find(L"port")) server.port = static_cast<std::uint16_t>(v->AsNumber(25565));
     if (const auto* v = obj.Find(L"autoRestart")) server.autoRestart = v->AsBool();
     if (const auto* v = obj.Find(L"autoBackup")) server.autoBackup = v->AsBool();
+    if (const auto* v = obj.Find(L"autoStartOnAppLaunch")) server.autoStartOnAppLaunch = v->AsBool();
 
     if (const auto* tunnel = obj.Find(L"tunnel"))
     {

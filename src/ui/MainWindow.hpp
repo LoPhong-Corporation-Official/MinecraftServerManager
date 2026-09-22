@@ -17,18 +17,22 @@
 #include "server/ServerManager.hpp"
 
 #include <QMainWindow>
+#include <QMap>
 #include <QString>
 
 #include <memory>
 #include <string>
 
 class QListWidget;
+class QListWidgetItem;
 class QPlainTextEdit;
 class QLineEdit;
 class QPushButton;
 class QLabel;
 class QStackedWidget;
 class QToolBar;
+class QSystemTrayIcon;
+class QCloseEvent;
 
 namespace ui
 {
@@ -48,6 +52,13 @@ public:
     // onto the Qt UI thread.
     void NotifyEvent(const core::AppEvent& event);
 
+protected:
+    // Closing the window (the X button) hides it to the system tray
+    // instead of quitting - the app (and any running servers) keeps
+    // going in the background. Use the tray icon's "Thoát" action, or
+    // Task Manager, to actually end the process.
+    void closeEvent(QCloseEvent* event) override;
+
 private slots:
     void OnAddServerClicked();
     void OnRemoveServerClicked();
@@ -64,12 +75,16 @@ private slots:
     void OnImportServerClicked();       // Fork-inspired: import an existing server folder
     void OnOpenInstalledAddonsClicked(); // Fork-inspired: view/remove installed plugins/mods
     void OnOpenAdvancedSettingsClicked(); // Phase 6 tunnel + scheduled restart
+    void OnOpenAppSettingsClicked();      // "Start with Windows" toggle
 
 private:
     void BuildToolbar();
+    void BuildTrayIcon();
+    void ShowAndRaiseWindow();
     void HandleAppEvent(core::AppEvent event); // always runs on the UI thread
     void AcceptEulaForCurrentServer(); // shared by the toolbar action and the auto-prompt
     void RefreshServerList();
+    void UpdateServerListItem(const std::wstring& serverId); // perf: patch one row instead of a full rebuild
     void RefreshSelectedServerConsole();
     void RefreshControlsForState();
     void UpdateStatsLabel(); // rebuilds labelStats_ from the two cached parts below
@@ -81,6 +96,8 @@ private:
     std::shared_ptr<core::EventDispatcher> events_;
 
     QToolBar* toolbar_ = nullptr;
+    QSystemTrayIcon* trayIcon_ = nullptr;
+    bool trayNotificationShown_ = false; // only show the "still running" balloon once per session
 
     // Startup/empty-state page (index 0) vs. the normal server view
     // (index 1) - shown depending on whether any server profile exists
@@ -89,6 +106,7 @@ private:
     QStackedWidget* stackedPages_ = nullptr;
 
     QListWidget* listServers_ = nullptr;
+    QMap<QString, QListWidgetItem*> serverListItems_; // serverId -> row, for O(1) per-server updates
     QPushButton* buttonAdd_ = nullptr;
     QPushButton* buttonRemove_ = nullptr;
     QLabel* labelStatus_ = nullptr;

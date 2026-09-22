@@ -31,12 +31,12 @@ QString FormatSize(std::uint64_t bytes)
 }
 } // namespace
 
-BackupsDialog::BackupsDialog(core::ServerConfig server, QWidget* parent)
+BackupsDialog::BackupsDialog(std::shared_ptr<server::MinecraftServer> server, QWidget* parent)
     : QDialog(parent)
     , server_(std::move(server))
 {
-    setWindowTitle(QStringLiteral("Backups — %1").arg(QString::fromStdWString(server_.name)));
-    resize(560, 460);
+    setWindowTitle(QStringLiteral("Backups — %1").arg(QString::fromStdWString(server_->GetConfig().name)));
+    resize(580, 480);
 
     auto* layout = new QVBoxLayout(this);
 
@@ -55,12 +55,16 @@ BackupsDialog::BackupsDialog(core::ServerConfig server, QWidget* parent)
     auto* buttonRow = new QHBoxLayout();
     buttonCreate_ = new QPushButton(QStringLiteral("+ Tạo backup mới"), this);
     buttonCreate_->setObjectName(QStringLiteral("btnStart"));
+    buttonRestore_ = new QPushButton(QStringLiteral("⭯ Restore"), this);
+    buttonRestore_->setObjectName(QStringLiteral("btnRestart"));
+    buttonRestore_->setEnabled(false);
     buttonDelete_ = new QPushButton(QStringLiteral("Xoá"), this);
     buttonDelete_->setObjectName(QStringLiteral("btnStop"));
     buttonDelete_->setEnabled(false);
     buttonOpenFolder_ = new QPushButton(QStringLiteral("📂 Mở thư mục backups"), this);
     buttonOpenFolder_->setObjectName(QStringLiteral("btnNeutral"));
     buttonRow->addWidget(buttonCreate_);
+    buttonRow->addWidget(buttonRestore_);
     buttonRow->addWidget(buttonDelete_);
     buttonRow->addWidget(buttonOpenFolder_);
     buttonRow->addStretch(1);
@@ -72,6 +76,7 @@ BackupsDialog::BackupsDialog(core::ServerConfig server, QWidget* parent)
     layout->addWidget(labelStatus_);
 
     connect(buttonCreate_, &QPushButton::clicked, this, &BackupsDialog::OnCreateClicked);
+    connect(buttonRestore_, &QPushButton::clicked, this, &BackupsDialog::OnRestoreClicked);
     connect(buttonDelete_, &QPushButton::clicked, this, &BackupsDialog::OnDeleteClicked);
     connect(buttonOpenFolder_, &QPushButton::clicked, this, &BackupsDialog::OnOpenFolderClicked);
     connect(listBackups_, &QListWidget::itemSelectionChanged, this, &BackupsDialog::OnSelectionChanged);
@@ -81,19 +86,19 @@ BackupsDialog::BackupsDialog(core::ServerConfig server, QWidget* parent)
 
 BackupsDialog::~BackupsDialog()
 {
-    // workerThread_'s own std::jthread destructor requests a stop and
-    // joins automatically - but since our lambda doesn't poll a
-    // stop_token (there's no safe way to interrupt mid-zip anyway), this
-    // just blocks here until any in-flight backup finishes. That is the
-    // point: it guarantees the background thread cannot still be calling
-    // QMetaObject::invokeMethod(this, ...) after this dialog's widgets
-    // start being destroyed.
+    // createThread_/restoreThread_'s own std::jthread destructors request
+    // a stop and join automatically - but since neither lambda polls a
+    // stop_token (there's no safe way to interrupt mid-zip/mid-extract
+    // anyway), this just blocks here until any in-flight operation
+    // finishes. That is the point: it guarantees neither background
+    // thread can still be calling QMetaObject::invokeMethod(this, ...)
+    // after this dialog's widgets start being torn down.
 }
 
 void BackupsDialog::Refresh()
 {
     listBackups_->clear();
-    for (const auto& info : backup::ListBackups(server_))
+    for (const auto& info : backup::ListBackups(server_->GetConfig()))
     {
         const QString label = QStringLiteral("%1   ·   %2")
             .arg(QString::fromStdWString(info.name), FormatSize(info.sizeBytes));
@@ -101,11 +106,14 @@ void BackupsDialog::Refresh()
         item->setData(Qt::UserRole, QString::fromStdWString(info.name));
     }
     buttonDelete_->setEnabled(false);
+    buttonRestore_->setEnabled(false);
 }
 
 void BackupsDialog::OnSelectionChanged()
 {
-    buttonDelete_->setEnabled(listBackups_->currentItem() != nullptr);
+    const bool hasSelection = listBackups_->currentItem() != nullptr;
+    buttonDelete_->setEnabled(hasSelection);
+    buttonRestore_->setEnabled(hasSelection);
 }
 
 void BackupsDialog::OnCreateClicked()
@@ -113,8 +121,8 @@ void BackupsDialog::OnCreateClicked()
     buttonCreate_->setEnabled(false);
     labelStatus_->setText(QStringLiteral("Đang tạo backup... (có thể mất một lúc nếu world lớn)"));
 
-    const core::ServerConfig configCopy = server_;
-    workerThread_ = std::jthread([this, configCopy](std::stop_token) {
+    const core::ServerConfig configCopy = server_->GetConfig();
+    createThread_ = std::jthread([this, configCopy](std::stop_token) {
         auto result = backup::CreateBackup(configCopy);
         QMetaObject::invokeMethod(
             this,
@@ -130,6 +138,69 @@ void BackupsDialog::OnCreateClicked()
                         QStringLiteral("Không tạo được backup — server có world chưa (đã Start ít nhất 1 lần chưa)?"));
                 }
                 Refresh();
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+void BackupsDialog::OnRestoreClicked()
+{
+    auto* item = listBackups_->currentItem();
+    if (item == nullptr)
+    {
+        return;
+    }
+    const QString name = item->data(Qt::UserRole).toString();
+
+    if (server_->GetState() != core::ServerState::Stopped)
+    {
+        QMessageBox::warning(
+            this,
+            QStringLiteral("Restore"),
+            QStringLiteral("Server phải ở trạng thái Stopped mới restore được. Hãy Stop server trước rồi thử lại."));
+        return;
+    }
+
+    const auto reply = QMessageBox::question(
+        this,
+        QStringLiteral("Xác nhận Restore"),
+        QStringLiteral(
+            "Restore backup \"%1\"?\n\n"
+            "World hiện tại (nếu có) sẽ được DI CHUYỂN (không xoá) sang một thư mục dự phòng trong "
+            "backups/ trước khi ghi đè, nên vẫn lấy lại được nếu chọn nhầm bản.")
+            .arg(name),
+        QMessageBox::Yes | QMessageBox::No);
+    if (reply != QMessageBox::Yes)
+    {
+        return;
+    }
+
+    buttonRestore_->setEnabled(false);
+    buttonCreate_->setEnabled(false);
+    labelStatus_->setText(QStringLiteral("Đang restore..."));
+
+    const core::ServerConfig configCopy = server_->GetConfig();
+    const std::wstring nameCopy = name.toStdWString();
+    restoreThread_ = std::jthread([this, configCopy, nameCopy](std::stop_token) {
+        auto result = backup::RestoreBackup(configCopy, nameCopy);
+        QMetaObject::invokeMethod(
+            this,
+            [this, result]() {
+                buttonCreate_->setEnabled(true);
+                buttonRestore_->setEnabled(listBackups_->currentItem() != nullptr);
+
+                if (!result.success)
+                {
+                    labelStatus_->setText(QStringLiteral("Lỗi restore: %1").arg(QString::fromStdWString(result.errorMessage)));
+                    return;
+                }
+                QString message = QStringLiteral("Đã restore xong. Có thể Start lại server.");
+                if (result.safetyBackupPath.has_value())
+                {
+                    message += QStringLiteral(" World cũ đã chuyển sang: %1")
+                        .arg(QString::fromStdWString(result.safetyBackupPath->wstring()));
+                }
+                labelStatus_->setText(message);
             },
             Qt::QueuedConnection);
     });
@@ -154,7 +225,7 @@ void BackupsDialog::OnDeleteClicked()
         return;
     }
 
-    if (backup::DeleteBackup(server_, name.toStdWString()))
+    if (backup::DeleteBackup(server_->GetConfig(), name.toStdWString()))
     {
         labelStatus_->setText(QStringLiteral("Đã xoá %1.").arg(name));
     }
@@ -167,7 +238,7 @@ void BackupsDialog::OnDeleteClicked()
 
 void BackupsDialog::OnOpenFolderClicked()
 {
-    const auto dir = backup::BackupsDir(server_);
+    const auto dir = backup::BackupsDir(server_->GetConfig());
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdWString(dir.wstring())));

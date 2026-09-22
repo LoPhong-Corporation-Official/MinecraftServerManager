@@ -18,7 +18,7 @@ namespace
 {
 // Modrinth asks API consumers to identify themselves with a descriptive
 // User-Agent so they can reach out if a client misbehaves.
-constexpr const char* kUserAgent = "MinecraftServerManager/1.0 (desktop app)";
+constexpr const char* kUserAgent = "MinecraftServerManager/1.0 (+https://github.com/minecraft-server-manager/desktop-app)";
 }
 
 ModrinthClient::ModrinthClient(QObject* parent)

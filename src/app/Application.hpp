@@ -22,6 +22,7 @@ public:
 
 private:
     void ShutdownServers();
+    void AutoStartFlaggedServers(); // servers with autoStartOnAppLaunch = true
 
     std::shared_ptr<core::EventDispatcher> events_;
     std::shared_ptr<config::ConfigManager> configManager_;

@@ -2,6 +2,7 @@
 
 #include "ui/AddServerDialog.hpp"
 #include "ui/AdvancedSettingsDialog.hpp"
+#include "ui/AppSettingsDialog.hpp"
 #include "ui/BackupsDialog.hpp"
 #include "ui/ImportServerDialog.hpp"
 #include "ui/InstalledAddonsDialog.hpp"
@@ -10,12 +11,16 @@
 #include "ui/PropertiesDialog.hpp"
 
 #include <QAction>
+#include <QApplication>
+#include <QCloseEvent>
 #include <QFont>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QPlainTextEdit>
@@ -23,6 +28,8 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStringList>
+#include <QStyle>
+#include <QSystemTrayIcon>
 #include <QTextCursor>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -77,6 +84,7 @@ MainWindow::MainWindow(
     resize(1120, 700);
 
     BuildToolbar();
+    BuildTrayIcon();
 
     auto* central = new QWidget(this);
     setCentralWidget(central);
@@ -295,8 +303,68 @@ void MainWindow::BuildToolbar()
 
     toolbar_->addSeparator();
 
+    auto* actionAppSettings = toolbar_->addAction(QStringLiteral("🚀  Cài đặt ứng dụng"));
+    connect(actionAppSettings, &QAction::triggered, this, &MainWindow::OnOpenAppSettingsClicked);
+
+    toolbar_->addSeparator();
+
     auto* actionRefresh = toolbar_->addAction(QStringLiteral("⟲  Làm mới"));
     connect(actionRefresh, &QAction::triggered, this, [this]() { RefreshServerList(); });
+}
+
+void MainWindow::BuildTrayIcon()
+{
+    trayIcon_ = new QSystemTrayIcon(this);
+    // No custom .ico asset yet - a standard style icon is a reasonable
+    // stand-in so the tray icon isn't blank; swap for a real app icon later.
+    trayIcon_->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
+    trayIcon_->setToolTip(QStringLiteral("Minecraft Server Manager"));
+
+    auto* menu = new QMenu(this);
+    auto* showAction = menu->addAction(QStringLiteral("Hiện cửa sổ"));
+    connect(showAction, &QAction::triggered, this, &MainWindow::ShowAndRaiseWindow);
+    menu->addSeparator();
+    auto* exitAction = menu->addAction(QStringLiteral("Thoát"));
+    connect(exitAction, &QAction::triggered, qApp, &QApplication::quit);
+    trayIcon_->setContextMenu(menu);
+
+    connect(trayIcon_, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
+        if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
+        {
+            ShowAndRaiseWindow();
+        }
+    });
+
+    trayIcon_->show();
+}
+
+void MainWindow::ShowAndRaiseWindow()
+{
+    show();
+    raise();
+    activateWindow();
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+    if (trayIcon_ != nullptr && trayIcon_->isVisible())
+    {
+        hide();
+        if (!trayNotificationShown_)
+        {
+            trayIcon_->showMessage(
+                QStringLiteral("Minecraft Server Manager"),
+                QStringLiteral("Ứng dụng vẫn chạy trong khay hệ thống. Bấm phải vào icon để Thoát hẳn."),
+                QSystemTrayIcon::Information,
+                4000);
+            trayNotificationShown_ = true;
+        }
+        event->ignore();
+    }
+    else
+    {
+        event->accept();
+    }
 }
 
 void MainWindow::NotifyEvent(const core::AppEvent& event)
@@ -313,10 +381,15 @@ void MainWindow::HandleAppEvent(core::AppEvent event)
     switch (event.type)
     {
         case core::EventType::ServerStateChanged:
-            // The list shows each server's state inline, so any state
-            // change needs the whole list re-rendered, not just the
-            // selected row.
-            RefreshServerList();
+            // Perf: patch just this server's row instead of clearing and
+            // rebuilding the whole QListWidget on every single state
+            // tick (Starting -> Running -> ... for every server, not
+            // just the selected one, used to trigger a full rebuild).
+            UpdateServerListItem(event.serverId);
+            if (event.serverId == GetSelectedServerId())
+            {
+                RefreshControlsForState();
+            }
             break;
         case core::EventType::ConsoleLine:
             if (event.serverId == GetSelectedServerId())
@@ -423,6 +496,12 @@ void MainWindow::OnOpenAdvancedSettingsClicked()
     AdvancedSettingsDialog dialog(srv, serverManager_, configManager_, this);
     dialog.exec();
     RefreshServerList(); // in case a state-affecting change happened while the dialog was open
+}
+
+void MainWindow::OnOpenAppSettingsClicked()
+{
+    AppSettingsDialog dialog(this);
+    dialog.exec();
 }
 
 void MainWindow::OnRemoveServerClicked()
@@ -570,7 +649,7 @@ void MainWindow::OnOpenBackupsClicked()
         QMessageBox::information(this, QStringLiteral("Backups"), QStringLiteral("Hãy chọn một server trước."));
         return;
     }
-    BackupsDialog dialog(srv->GetConfig(), this);
+    BackupsDialog dialog(srv, this);
     dialog.exec();
 }
 
@@ -617,10 +696,14 @@ void MainWindow::AcceptEulaForCurrentServer()
 
 void MainWindow::RefreshServerList()
 {
+    // Full rebuild: only needed for structural changes (add/remove/
+    // import/initial load). Per-server state changes are patched in
+    // place by UpdateServerListItem() instead - see HandleAppEvent().
     const std::wstring currentlySelected = GetSelectedServerId();
 
     listServers_->blockSignals(true);
     listServers_->clear();
+    serverListItems_.clear();
 
     QListWidgetItem* itemToSelect = nullptr;
     const auto allServers = serverManager_->GetAll();
@@ -631,7 +714,9 @@ void MainWindow::RefreshServerList()
             QStringLiteral("  ·  ") + QString::fromWCharArray(core::ToString(srv->GetState()));
 
         auto* item = new QListWidgetItem(label, listServers_);
-        item->setData(Qt::UserRole, QString::fromStdWString(cfg.id));
+        const QString id = QString::fromStdWString(cfg.id);
+        item->setData(Qt::UserRole, id);
+        serverListItems_.insert(id, item);
         if (cfg.id == currentlySelected)
         {
             itemToSelect = item;
@@ -664,6 +749,25 @@ void MainWindow::RefreshServerList()
     // Startup page: greet a fresh install (or one where every server was
     // removed) with a call-to-action instead of an empty console.
     stackedPages_->setCurrentIndex(allServers.empty() ? 0 : 1);
+}
+
+void MainWindow::UpdateServerListItem(const std::wstring& serverId)
+{
+    const QString id = QString::fromStdWString(serverId);
+    const auto it = serverListItems_.constFind(id);
+    if (it == serverListItems_.constEnd())
+    {
+        return; // not currently in the list (e.g. removed just before this event arrived) - nothing to patch
+    }
+    auto srv = serverManager_->Get(serverId);
+    if (!srv)
+    {
+        return;
+    }
+    const auto& cfg = srv->GetConfig();
+    const QString label = QString::fromStdWString(cfg.name) +
+        QStringLiteral("  ·  ") + QString::fromWCharArray(core::ToString(srv->GetState()));
+    it.value()->setText(label);
 }
 
 void MainWindow::RefreshSelectedServerConsole()
